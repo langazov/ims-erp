@@ -34,10 +34,10 @@ export default {
         '4xl': ['var(--text-4xl)', { lineHeight: 'var(--leading-none)' }]
       },
       spacing: {
-        0_5: 'var(--space-0_5)',
-        1_5: 'var(--space-1_5)',
-        2_5: 'var(--space-2_5)',
-        3_5: 'var(--space-3_5)'
+        '0-5': 'var(--space-0-5)',
+        '1-5': 'var(--space-1-5)',
+        '2-5': 'var(--space-2-5)',
+        '3-5': 'var(--space-3-5)'
       },
       borderRadius: {
         none: 'var(--radius-none)',

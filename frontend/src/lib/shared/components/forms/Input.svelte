@@ -83,7 +83,7 @@
     {maxlength}
     {minlength}
     {pattern}
-    inputmode
+    inputmode={inputmode}
     class={inputClasses}
     on:input={handleInput}
     on:change={handleChange}

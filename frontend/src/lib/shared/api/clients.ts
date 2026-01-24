@@ -65,7 +65,8 @@ export interface ClientListResponse {
 import api from './index';
 
 export async function getClients(filter?: ClientFilter): Promise<ClientListResponse> {
-  return api.get('/clients', filter);
+  const params = filter as Record<string, string | number | boolean | undefined>;
+  return api.get('/clients', params);
 }
 
 export async function getClientById(id: string): Promise<Client> {

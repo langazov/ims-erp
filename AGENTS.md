@@ -303,7 +303,54 @@ go list -m -u all
 
 ## Dependency Management
 
-### Prefer Updating Libraries Over Downgrading Go/Frameworks
+### Frontend Framework Version Requirements
+
+**🔴 FORBIDDEN: Decreasing Framework Versions**
+
+Never downgrade frontend framework versions (Svelte, SvelteKit, Vue, React, etc.) to accommodate library incompatibilities. When version conflicts occur:
+
+1. **Update the library** to a version compatible with the current framework
+2. **Find an alternative library** that supports the current framework
+3. **Report the issue** for team resolution
+
+**Svelte/SvelteKit Version:**
+- **Required:** Svelte 5.x with SvelteKit 2.x
+- Never downgrade to Svelte 4.x or earlier
+- Libraries must be updated to support Svelte 5
+
+**Why We Never Downgrade:**
+- Svelte 5 provides better performance and new features
+- Future development targets Svelte 5
+- Downgrades create technical debt
+- Incompatibility issues are library problems, not framework problems
+
+**Examples of FORBIDDEN actions:**
+```bash
+# ❌ NEVER DO THIS
+npm install svelte@^4.0.0  # Downgrades from Svelte 5
+npm install @sveltejs/kit@^1.0.0  # Downgrades from SvelteKit 2
+
+# ✅ CORRECT APPROACH
+npm install library@latest-for-svelte5  # Find compatible version
+npm install alternative-library  # Use different library
+```
+
+**Version Update Workflow:**
+```bash
+# 1. Check current versions
+npm list svelte @sveltejs/kit
+
+# 2. If library is incompatible, update it
+npm install library-name@latest
+
+# 3. Or find Svelte 5 compatible alternatives
+npm search compatible-library
+
+# 4. Verify builds work
+npm run build
+```
+
+### Go Version Commitment
 
 When encountering version incompatibilities, **always prefer updating libraries to newer versions** rather than reducing Go version or frontend framework versions.
 

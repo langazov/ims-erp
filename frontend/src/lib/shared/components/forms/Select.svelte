@@ -17,7 +17,7 @@
 
   let isOpen = false;
 
-  function handleSelect(option: { value: string | number; label: string }) {
+  function handleSelect(option: typeof options[0]) {
     if (!option.disabled) {
       value = option.value;
       isOpen = false;
