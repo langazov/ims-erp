@@ -1299,4 +1299,592 @@ When modifying existing code, verify:
 - [ ] Design patterns applied where appropriate
 - [ ] Logging added for important operations
 
+---
+
+## Frontend Development Guidelines
+
+### Frontend Architecture Reference
+
+When working on the frontend, always reference:
+
+1. **`frontend/ARCHITECTURE.md`** - SvelteKit plugin system architecture
+2. **`frontend/UI-DESIGN-GUIDE.md`** - Professional UI design standards
+3. **`frontend/PLAN.md`** - Frontend implementation roadmap
+
+### Frontend Tech Stack
+
+| Technology | Purpose |
+|------------|---------|
+| SvelteKit | Application framework |
+| Tailwind CSS | Utility-first styling |
+| Lucide Svelte | Icon library |
+| Zod | Form validation |
+| date-fns | Date formatting |
+
+### Frontend Commands
+
+```bash
+# Navigate to frontend directory
+cd frontend/
+
+# Install dependencies
+npm install
+
+# Install additional UI dependencies
+npm install -D tailwindcss postcss autoprefixer
+npm install lucide-svelte clsx tailwind-merge zod date-fns
+
+# Run development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+
+# Lint TypeScript
+npm run lint
+
+# Type check
+npm run typecheck
+```
+
+### Frontend Project Structure
+
+```
+frontend/
+├── src/
+│   ├── lib/
+│   │   ├── core/                    # Plugin system core
+│   │   │   ├── index.ts
+│   │   │   ├── types.ts
+│   │   │   ├── plugin-registry.ts
+│   │   │   ├── plugin-loader.ts
+│   │   │   ├── message-bus.ts
+│   │   │   ├── route-manager.ts
+│   │   │   ├── state-manager.ts
+│   │   │   └── permissions.ts
+│   │   │
+│   │   ├── shared/                  # Shared utilities
+│   │   │   ├── api/                 # API client layer
+│   │   │   ├── components/          # Reusable UI components
+│   │   │   │   ├── display/         # Badge, Card, Alert, Toast, etc.
+│   │   │   │   ├── forms/           # Input, Button, Select, etc.
+│   │   │   │   ├── layout/          # Sidebar, Modal, Card, etc.
+│   │   │   │   └── data/            # Table, Pagination, etc.
+│   │   │   ├── utils/               # Formatting, validation helpers
+│   │   │   ├── styles/              # CSS variables, global styles
+│   │   │   └── types/               # TypeScript types
+│   │   │
+│   │   └── plugins/                 # Feature plugins
+│   │       ├── dashboard/
+│   │       ├── clients/
+│   │       ├── warehouse/
+│   │       ├── inventory/
+│   │       ├── products/
+│   │       ├── users/
+│   │       ├── documents/
+│   │       ├── invoices/
+│   │       ├── payments/
+│   │       └── orders/
+│   │
+│   └── routes/
+│       ├── +layout.svelte           # Root layout
+│       ├── +layout.server.ts        # Server-side plugin loading
+│       ├── +page.svelte             # Main app shell
+│       └── [[...catchall]]/         # Dynamic plugin routes
+```
+
+### Frontend Code Style
+
+#### Component Structure
+
+```svelte
+<!-- src/lib/shared/components/forms/Button.svelte -->
+<script lang="ts">
+  // 1. Props with types
+  export let variant: 'primary' | 'secondary' | 'danger' = 'primary';
+  export let size: 'sm' | 'md' | 'lg' = 'md';
+  export let disabled = false;
+  export let loading = false;
+
+  // 2. Event handlers
+  import { createEventDispatcher } from 'svelte';
+  const dispatch = createEventDispatcher();
+
+  function handleClick() {
+    if (!disabled && !loading) {
+      dispatch('click');
+    }
+  }
+</script>
+
+<!-- 3. Component markup with Tailwind classes -->
+<button
+  class="inline-flex items-center justify-center font-medium rounded-lg transition-colors"
+  class:bg-primary-600={variant === 'primary'}
+  class:hover:bg-primary-700={variant === 'primary'}
+  class:bg-gray-100={variant === 'secondary'}
+  class:opacity-50={disabled || loading}
+  {disabled}
+  on:click={handleClick}
+>
+  {#if loading}
+    <svg class="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  {/if}
+  <slot />
+</button>
+```
+
+#### API Client Pattern
+
+```typescript
+// src/lib/shared/api/clients.ts
+import type { Client, CreateClientRequest, ClientFilter } from '$lib/shared/types';
+
+const API_BASE = '/api/clients';
+
+export async function getClients(filter?: ClientFilter): Promise<Client[]> {
+  const params = new URLSearchParams();
+  if (filter?.status) params.set('status', filter.status);
+  if (filter?.page) params.set('page', filter.page.toString());
+  
+  const response = await fetch(`${API_BASE}?${params}`);
+  if (!response.ok) throw new Error('Failed to fetch clients');
+  return response.json();
+}
+
+export async function getClientById(id: string): Promise<Client> {
+  const response = await fetch(`${API_BASE}/${id}`);
+  if (!response.ok) throw new Error('Client not found');
+  return response.json();
+}
+
+export async function createClient(data: CreateClientRequest): Promise<Client> {
+  const response = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to create client');
+  return response.json();
+}
+
+export async function updateClient(id: string, data: Partial<CreateClientRequest>): Promise<Client> {
+  const response = await fetch(`${API_BASE}/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to update client');
+  return response.json();
+}
+
+export async function deleteClient(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error('Failed to delete client');
+}
+```
+
+#### Plugin Definition Pattern
+
+```typescript
+// src/lib/plugins/clients/index.ts
+import type { PluginDefinition } from '$lib/core/types';
+import { manifest } from './manifest';
+import { api } from './api';
+import { messages } from './messages';
+import { stores } from './stores';
+import { routes } from './routes';
+
+const clientsPlugin: PluginDefinition = {
+  manifest,
+  api,
+  messages,
+  stores,
+  routes,
+
+  async setup(context) {
+    context.logger.info('Clients plugin initializing...');
+    // Initialize plugin state
+  },
+
+  async teardown() {
+    // Cleanup
+  },
+};
+
+export default clientsPlugin;
+```
+
+### Frontend Testing
+
+```bash
+# Run frontend tests
+cd frontend && npm run test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with coverage
+npm run test:coverage
+
+# Run e2e tests
+npm run test:e2e
+```
+
+### E2E Testing Guidelines
+
+E2E tests verify the complete application flow from user perspective.
+
+#### E2E Testing Stack
+
+| Tool | Purpose |
+|------|---------|
+| Playwright | Browser automation |
+| Vitest | Test runner |
+| Cucumber | BDD scenarios |
+
+#### E2E Test Commands
+
+```bash
+# Install Playwright
+npm install -D @playwright/test
+npx playwright install
+
+# Run all e2e tests
+npm run test:e2e
+
+# Run specific test file
+npm run test:e2e -- tests/clients.spec.ts
+
+# Run tests in headed mode (see browser)
+npm run test:e2e -- --headed
+
+# Run tests with debugging
+npm run test:e2e -- --debug
+
+# Generate tests with Codegen
+npx playwright codegen http://localhost:5173
+
+# Take screenshot on failure
+npm run test:e2e -- --reporter=line --grep="@smoke"
+
+# Run tests in parallel
+npm run test:e2e -- --workers=4
+```
+
+#### E2E Test Structure
+
+```
+frontend/
+├── tests/
+│   ├── e2e/
+│   │   ├── setup/
+│   │   │   ├── fixtures.ts          # Test fixtures
+│   │   │   ├── authentication.ts    # Login helper
+│   │   │   └── api-helpers.ts       # API setup helpers
+│   │   ├── pages/
+│   │   │   ├── BasePage.ts          # Base page object
+│   │   │   ├── DashboardPage.ts
+│   │   │   ├── ClientsPage.ts
+│   │   │   ├── WarehousesPage.ts
+│   │   │   └── InventoryPage.ts
+│   │   ├── specs/
+│   │   │   ├── dashboard.spec.ts    # Dashboard tests
+│   │   │   ├── clients.spec.ts      # Client management
+│   │   │   ├── warehouses.spec.ts   # Warehouse management
+│   │   │   ├── inventory.spec.ts    # Inventory tests
+│   │   │   ├── products.spec.ts     # Product tests
+│   │   │   ├── users.spec.ts        # User management
+│   │   │   ├── documents.spec.ts    # Document tests
+│   │   │   ├── invoices.spec.ts     # Invoice tests
+│   │   │   ├── payments.spec.ts     # Payment tests
+│   │   │   └── orders.spec.ts       # Order tests
+│   │   ├── helpers/
+│   │   │   ├── selectors.ts         # Reusable selectors
+│   │   │   └── constants.ts         # Test constants
+│   │   └── playwright.config.ts
+│   └── integration/
+│       └── ...                      # Integration tests
+```
+
+#### E2E Test Example
+
+```typescript
+// tests/e2e/specs/clients.spec.ts
+import { test, expect } from '@playwright/test';
+import { ClientsPage } from '../pages/ClientsPage';
+
+test.describe('Client Management', () => {
+  let clientsPage: ClientsPage;
+
+  test.beforeEach(async ({ page }) => {
+    clientsPage = new ClientsPage(page);
+    await clientsPage.goto();
+  });
+
+  test('should display client list', async ({ page }) => {
+    await expect(page.locator('h1')).toContainText('Clients');
+    await expect(page.locator('[data-testid="client-list"]')).toBeVisible();
+  });
+
+  test('should create a new client', async ({ page }) => {
+    await page.click('[data-testid="create-client-button"]');
+    await expect(page.locator('[data-testid="client-form"]')).toBeVisible();
+
+    await page.fill('[data-testid="name-input"]', 'Test Company');
+    await page.fill('[data-testid="email-input"]', 'test@example.com');
+    await page.fill('[data-testid="phone-input"]', '+1234567890');
+
+    await page.click('[data-testid="submit-button"]');
+
+    await expect(page.locator('[data-testid="toast"]')).toContainText(
+      'Client created successfully'
+    );
+    await expect(page.locator('[data-testid="client-name"]')).toHaveText('Test Company');
+  });
+
+  test('should search clients', async ({ page }) => {
+    await page.fill('[data-testid="search-input"]', 'Test Company');
+    await page.click('[data-testid="search-button"]');
+
+    await expect(page.locator('[data-testid="client-row"]').first()).toContainText('Test Company');
+  });
+
+  test('should edit client details', async ({ page }) => {
+    await page.click('[data-testid="client-row"] >> nth=0');
+    await expect(page).toHaveURL(/\/clients\/.+/);
+
+    await page.click('[data-testid="edit-button"]');
+    await page.fill('[data-testid="name-input"]', 'Updated Company');
+
+    await page.click('[data-testid="save-button"]');
+
+    await expect(page.locator('[data-testid="toast"]')).toContainText('Client updated');
+  });
+
+  test('should show validation errors', async ({ page }) => {
+    await page.click('[data-testid="create-client-button"]');
+    await page.click('[data-testid="submit-button"]');
+
+    await expect(page.locator('[data-testid="name-error"]')).toContainText('Name is required');
+    await expect(page.locator('[data-testid="email-error"]')).toContainText('Email is required');
+  });
+
+  test('should delete client', async ({ page }) => {
+    await page.hover('[data-testid="client-row"] >> nth=0');
+    await page.click('[data-testid="delete-button"]');
+
+    await expect(page.locator('[data-testid="confirm-dialog"]')).toBeVisible();
+    await page.click('[data-testid="confirm-delete"]');
+
+    await expect(page.locator('[data-testid="toast"]')).toContainText('Client deleted');
+  });
+});
+
+test.describe('Client Search and Filter', () => {
+  test('should filter by status', async ({ page }) => {
+    await page.selectOption('[data-testid="status-filter"]', 'active');
+    await page.click('[data-testid="apply-filters"]');
+
+    await expect(page.locator('[data-testid="client-row"]')).toHaveCount(5);
+  });
+
+  test('should clear filters', async ({ page }) => {
+    await page.selectOption('[data-testid="status-filter"]', 'active');
+    await page.click('[data-testid="clear-filters"]');
+
+    await expect(page.locator('[data-testid="status-filter"]')).toHaveValue('');
+  });
+});
+```
+
+#### Page Object Pattern
+
+```typescript
+// tests/e2e/pages/ClientsPage.ts
+import type { Page } from '@playwright/test';
+
+export class ClientsPage {
+  constructor(private page: Page) {}
+
+  async goto(): Promise<void> {
+    await this.page.goto('/clients');
+  }
+
+  async createClient(data: {
+    name: string;
+    email: string;
+    phone?: string;
+  }): Promise<void> {
+    await this.page.click('[data-testid="create-client-button"]');
+    await this.page.fill('[data-testid="name-input"]', data.name);
+    await this.page.fill('[data-testid="email-input"]', data.email);
+    if (data.phone) {
+      await this.page.fill('[data-testid="phone-input"]', data.phone);
+    }
+    await this.page.click('[data-testid="submit-button"]');
+  }
+
+  async searchClients(query: string): Promise<void> {
+    await this.page.fill('[data-testid="search-input"]', query);
+    await this.page.click('[data-testid="search-button"]');
+  }
+
+  async getClientNames(): Promise<string[]> {
+    return this.page.locator('[data-testid="client-name"]').allTextContents();
+  }
+
+  async getClientCount(): Promise<number> {
+    return this.page.locator('[data-testid="client-row"]').count();
+  }
+}
+```
+
+#### Test Fixtures
+
+```typescript
+// tests/e2e/setup/fixtures.ts
+import { test as base } from '@playwright/test';
+import { ClientsPage } from '../pages/ClientsPage';
+import { WarehousesPage } from '../pages/WarehousesPage';
+
+interface Fixtures {
+  clientsPage: ClientsPage;
+  warehousesPage: WarehousesPage;
+  authenticatedPage: Page;
+}
+
+export const test = base.extend<Fixtures>({
+  authenticatedPage: async ({ browser }, use) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    // Login before each test
+    await page.goto('/login');
+    await page.fill('[data-testid="email"]', 'admin@example.com');
+    await page.fill('[data-testid="password"]', 'password123');
+    await page.click('[data-testid="login-button"]');
+
+    await expect(page).toHaveURL('/dashboard');
+
+    await use(page);
+
+    await context.close();
+  },
+
+  clientsPage: async ({ authenticatedPage }, use) => {
+    const clientsPage = new ClientsPage(authenticatedPage);
+    await use(clientsPage);
+  },
+
+  warehousesPage: async ({ authenticatedPage }, use) => {
+    const warehousesPage = new WarehousesPage(authenticatedPage);
+    await use(warehousesPage);
+  },
+});
+```
+
+#### Authentication Fixture
+
+```typescript
+// tests/e2e/setup/authentication.ts
+import type { Page } from '@playwright/test';
+
+export async function loginAs(page: Page, role: 'admin' | 'user' | 'viewer'): Promise<void> {
+  const credentials = {
+    admin: { email: 'admin@example.com', password: 'password123' },
+    user: { email: 'user@example.com', password: 'password123' },
+    viewer: { email: 'viewer@example.com', password: 'password123' },
+  };
+
+  await page.goto('/login');
+  await page.fill('[data-testid="email"]', credentials[role].email);
+  await page.fill('[data-testid="password"]', credentials[role].password);
+  await page.click('[data-testid="login-button"]');
+}
+
+export async function logout(page: Page): Promise<void> {
+  await page.click('[data-testid="user-menu"]');
+  await page.click('[data-testid="logout-button"]');
+}
+```
+
+#### E2E Test Checklist
+
+Before running E2E tests:
+
+- [ ] Backend services are running
+- [ ] Frontend dev server is running (`npm run dev`)
+- [ ] Test database is available
+- [ ] No sensitive data in tests
+
+Before committing E2E tests:
+
+- [ ] Tests pass locally
+- [ ] Tests are independent (can run in any order)
+- [ ] Tests handle loading states
+- [ ] Tests use data-testid selectors
+- [ ] Tests include error scenarios
+- [ ] Tests use page objects for complex flows
+- [ ] Tests are readable and well-documented
+- [ ] No hardcoded waits (use expect or waitFor)
+
+#### E2E Test Coverage Targets
+
+| Feature | Minimum Tests | Description |
+|---------|--------------|-------------|
+| Authentication | 5 | Login, logout, session expiry, MFA, permissions |
+| Dashboard | 3 | Load, widgets, navigation |
+| Clients | 10 | CRUD, search, filter, validation, errors |
+| Warehouses | 8 | CRUD, locations, operations |
+| Inventory | 8 | Items, reservations, transactions |
+| Products | 8 | CRUD, variants, pricing |
+| Users | 6 | CRUD, roles, permissions |
+| Documents | 5 | Upload, search, download |
+| Invoices | 7 | CRUD, line items, payments |
+| Payments | 5 | Record, refund, reconciliation |
+| Orders | 7 | CRUD, fulfillment, tracking |
+
+### Frontend Linting
+
+```bash
+# Lint and format
+cd frontend && npm run lint
+npm run format
+
+# Type check
+npm run typecheck
+```
+
+### UI Design Checklist
+
+Before committing frontend code, verify:
+
+- [ ] Components use shared UI library (Button, Input, Card, etc.)
+- [ ] Colors follow the design system (primary, neutral, semantic)
+- [ ] Typography uses the type scale (text-xs to text-4xl)
+- [ ] Spacing follows the 4px base unit (space-1 to space-20)
+- [ ] Components have hover, focus, and disabled states
+- [ ] Forms include validation and error messages
+- [ ] Loading states use skeletons or spinners
+- [ ] Dark mode is supported
+- [ ] Responsive design works on mobile
+- [ ] Accessibility: ARIA labels, keyboard navigation, focus indicators
+
+### Frontend Resources
+
+| Resource | Location |
+|----------|----------|
+| Plugin System | `frontend/ARCHITECTURE.md` |
+| UI Design Guide | `frontend/UI-DESIGN-GUIDE.md` |
+| Implementation Plan | `frontend/PLAN.md` |
+| Component Examples | `frontend/src/lib/shared/components/` |
+| Plugin Examples | `frontend/src/lib/plugins/dashboard/` |
+
 
