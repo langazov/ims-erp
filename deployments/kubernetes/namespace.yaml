@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: erp-system
+  labels:
+    name: erp-system
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: erp-monitoring
+  labels:
+    name: erp-monitoring
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: erp-system
+  namespace: erp-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: erp-system-role
+  namespace: erp-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: erp-system-rolebinding
+  namespace: erp-system
+subjects:
+- kind: ServiceAccount
+  name: erp-system
+  namespace: erp-system
+roleRef:
+  kind: Role
+  name: erp-system-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: erp-system-network-policy
+  namespace: erp-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: erp-system
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: erp-system
+    - namespaceSelector:
+        matchLabels:
+          name: erp-monitoring

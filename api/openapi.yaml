@@ -1,0 +1,1392 @@
+openapi: 3.0.3
+info:
+  title: IMS ERP System API
+  description: |
+    Complete ERP system API with microservices architecture
+    
+    ## Architecture
+    - **API Gateway** (8080) - Central entry point for all client requests
+    - **Auth Service** (8081) - Authentication and authorization
+    - **Client Services** (8082) - Client management (CQRS pattern)
+    - **Invoice Service** (8083) - Invoice management
+    - **Payment Service** (8084) - Payment processing
+    - **Product Service** (8085) - Product catalog
+    - **Order Service** (8086) - Order management
+    - **Inventory Service** (8087) - Inventory control
+    
+    ## Authentication
+    All protected endpoints require Bearer token authentication.
+    Include the token in the Authorization header:
+    ```
+    Authorization: Bearer <your-token>
+    ```
+    
+    ## Rate Limiting
+    API requests are rate limited to 1000 requests per minute per tenant.
+    
+    ## Error Handling
+    All errors follow standard HTTP status codes with detailed error messages.
+  version: 1.0.0
+  contact:
+    name: IMS ERP Support
+    email: support@ims-erp.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://api.ims-erp.example.com/api/v1
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User authentication and authorization
+  - name: Clients
+    description: Client/Customer management
+  - name: Invoices
+    description: Invoice management and billing
+  - name: Payments
+    description: Payment processing and transactions
+  - name: Products
+    description: Product catalog management
+  - name: Orders
+    description: Order management
+  - name: Inventory
+    description: Inventory and warehouse management
+
+paths:
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: Creates a new user account in the specified tenant
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for the new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticates user and returns access/refresh tokens
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+              required:
+                - refreshToken
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+
+  /clients:
+    get:
+      tags:
+        - Clients
+      summary: List clients
+      description: Retrieves a paginated list of clients for a tenant
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        '200':
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientListResponse'
+    post:
+      tags:
+        - Clients
+      summary: Create client
+      description: Creates a new client in the specified tenant
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClientRequest'
+      responses:
+        '201':
+          description: Client created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+
+  /clients/{clientId}:
+    get:
+      tags:
+        - Clients
+      summary: Get client by ID
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Client details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Clients
+      summary: Update client
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateClientRequest'
+      responses:
+        '200':
+          description: Client updated successfully
+    delete:
+      tags:
+        - Clients
+      summary: Deactivate client
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Client deactivated successfully
+
+  /invoices:
+    get:
+      tags:
+        - Invoices
+      summary: List invoices
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, pending, sent, paid, overdue, cancelled, refunded]
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of invoices
+    post:
+      tags:
+        - Invoices
+      summary: Create invoice
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoiceRequest'
+      responses:
+        '201':
+          description: Invoice created successfully
+
+  /invoices/{invoiceId}:
+    get:
+      tags:
+        - Invoices
+      summary: Get invoice by ID
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: invoiceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invoice details
+    put:
+      tags:
+        - Invoices
+      summary: Update invoice
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: invoiceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invoice updated successfully
+    delete:
+      tags:
+        - Invoices
+      summary: Delete invoice (cancel)
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: invoiceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Invoice cancelled successfully
+
+  /invoices/{invoiceId}/send:
+    post:
+      tags:
+        - Invoices
+      summary: Send invoice
+      description: Sends the invoice to the client via email
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: invoiceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invoice sent successfully
+
+  /invoices/{invoiceId}/payments:
+    post:
+      tags:
+        - Invoices
+      summary: Record payment
+      description: Records a payment against the invoice
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: invoiceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordPaymentRequest'
+      responses:
+        '201':
+          description: Payment recorded successfully
+
+  /payments/process:
+    post:
+      tags:
+        - Payments
+      summary: Process payment
+      description: Processes a payment through the specified provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessPaymentRequest'
+      responses:
+        '201':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResult'
+
+  /payments/refund:
+    post:
+      tags:
+        - Payments
+      summary: Process refund
+      description: Processes a refund for a previous payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '201':
+          description: Refund processed successfully
+
+  /products:
+    get:
+      tags:
+        - Products
+      summary: List products
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: category
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, active, inactive, discontinued]
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of products
+    post:
+      tags:
+        - Products
+      summary: Create product
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Product created successfully
+
+  /products/search:
+    get:
+      tags:
+        - Products
+      summary: Search products
+      description: Full-text search across product catalog
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+          description: Search query
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Search results
+
+  /orders:
+    get:
+      tags:
+        - Orders
+      summary: List orders
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, pending, confirmed, processing, shipped, delivered, completed, cancelled, refunded]
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of orders
+    post:
+      tags:
+        - Orders
+      summary: Create order
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  orderNumber:
+                    type: string
+
+  /orders/{orderId}:
+    get:
+      tags:
+        - Orders
+      summary: Get order by ID
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order details
+    put:
+      tags:
+        - Orders
+      summary: Update order
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order updated successfully
+    delete:
+      tags:
+        - Orders
+      summary: Cancel order
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '204':
+          description: Order cancelled successfully
+
+  /orders/{orderId}/ship:
+    post:
+      tags:
+        - Orders
+      summary: Ship order
+      description: Marks an order as shipped with tracking information
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trackingNumber:
+                  type: string
+                carrier:
+                  type: string
+              required:
+                - trackingNumber
+                - carrier
+      responses:
+        '200':
+          description: Order shipped successfully
+
+  /inventory/items:
+    get:
+      tags:
+        - Inventory
+      summary: List inventory items
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: productId
+          schema:
+            type: string
+        - in: query
+          name: warehouseId
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of inventory items
+    post:
+      tags:
+        - Inventory
+      summary: Create inventory item
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInventoryItemRequest'
+      responses:
+        '201':
+          description: Inventory item created successfully
+
+  /inventory/warehouses:
+    get:
+      tags:
+        - Inventory
+      summary: List warehouses
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of warehouses
+    post:
+      tags:
+        - Inventory
+      summary: Create warehouse
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWarehouseRequest'
+      responses:
+        '201':
+          description: Warehouse created successfully
+
+  /inventory/transactions:
+    get:
+      tags:
+        - Inventory
+      summary: List inventory transactions
+      description: Retrieves inventory movement history
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: productId
+          schema:
+            type: string
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: endDate
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of transactions
+
+  /inventory/reservations:
+    get:
+      tags:
+        - Inventory
+      summary: List stock reservations
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, released, fulfilled, expired]
+      responses:
+        '200':
+          description: List of reservations
+    post:
+      tags:
+        - Inventory
+      summary: Create stock reservation
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+      responses:
+        '201':
+          description: Reservation created successfully
+
+components:
+  schemas:
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+        sessionId:
+          type: string
+
+    TokenPair:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        tokenType:
+          type: string
+          default: Bearer
+        expiresIn:
+          type: integer
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, locked]
+
+    CreateClientRequest:
+      type: object
+      required:
+        - name
+        - email
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        creditLimit:
+          type: number
+        billingAddress:
+          $ref: '#/components/schemas/Address'
+        tags:
+          type: array
+          items:
+            type: string
+
+    UpdateClientRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        creditLimit:
+          type: number
+
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        clientCode:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive]
+        creditLimit:
+          type: number
+        currentBalance:
+          type: number
+
+    ClientDetail:
+      allOf:
+        - $ref: '#/components/schemas/Client'
+        - type: object
+          properties:
+            billingAddress:
+              $ref: '#/components/schemas/Address'
+            shippingAddresses:
+              type: array
+              items:
+                $ref: '#/components/schemas/Address'
+            customFields:
+              type: object
+            activityLog:
+              type: array
+              items:
+                type: object
+
+    ClientListResponse:
+      type: object
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: '#/components/schemas/Client'
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalPages:
+          type: integer
+
+    CreateInvoiceRequest:
+      type: object
+      required:
+        - clientId
+        - currency
+        - paymentTerm
+      properties:
+        clientId:
+          type: string
+          format: uuid
+        currency:
+          type: string
+        paymentTerm:
+          type: string
+          enum: [due_on_receipt, net_15, net_30, net_45, net_60, end_of_month]
+        issueDate:
+          type: string
+          format: date
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceLineRequest'
+        notes:
+          type: string
+        terms:
+          type: string
+
+    InvoiceLineRequest:
+      type: object
+      required:
+        - description
+        - quantity
+        - unitPrice
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+        unitPrice:
+          type: number
+        discount:
+          type: number
+          default: 0
+        taxRate:
+          type: number
+          default: 0
+        productId:
+          type: string
+          format: uuid
+
+    RecordPaymentRequest:
+      type: object
+      required:
+        - amount
+        - method
+      properties:
+        amount:
+          type: number
+        method:
+          type: string
+          enum: [credit_card, bank_transfer, cash, check]
+        reference:
+          type: string
+
+    CreateProductRequest:
+      type: object
+      required:
+        - sku
+        - name
+        - type
+        - category
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [good, service, subscription]
+        category:
+          type: string
+        listPrice:
+          type: number
+        cost:
+          type: number
+        trackInventory:
+          type: boolean
+          default: true
+        quantityOnHand:
+          type: integer
+          default: 0
+        tags:
+          type: array
+          items:
+            type: string
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - clientId
+        - type
+        - source
+      properties:
+        clientId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [standard, pre_order, subscription, quote]
+        source:
+          type: string
+          enum: [web, mobile, api, phone, in_store, marketplace]
+        currency:
+          type: string
+          default: USD
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLineRequest'
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        billingAddress:
+          $ref: '#/components/schemas/Address'
+        notes:
+          type: string
+
+    OrderLineRequest:
+      type: object
+      required:
+        - productId
+        - quantity
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+        discount:
+          type: number
+          default: 0
+
+    ProcessPaymentRequest:
+      type: object
+      required:
+        - invoiceId
+        - amount
+        - currency
+        - method
+      properties:
+        invoiceId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+        method:
+          type: string
+          enum: [credit_card, bank_transfer, paypal, stripe]
+        provider:
+          type: string
+        description:
+          type: string
+
+    PaymentResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        paymentId:
+          type: string
+        transactionId:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+
+    RefundRequest:
+      type: object
+      required:
+        - paymentId
+        - amount
+        - reason
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        reason:
+          type: string
+        refundType:
+          type: string
+          enum: [full, partial]
+
+    CreateInventoryItemRequest:
+      type: object
+      required:
+        - productId
+        - warehouseId
+        - sku
+        - quantity
+      properties:
+        productId:
+          type: string
+          format: uuid
+        warehouseId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        quantity:
+          type: integer
+        unitCost:
+          type: number
+        lotNumber:
+          type: string
+        serialNumber:
+          type: string
+
+    CreateWarehouseRequest:
+      type: object
+      required:
+        - name
+        - code
+        - type
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        type:
+          type: string
+          enum: [main, satellite, returns, distribution, fulfillment]
+        address:
+          $ref: '#/components/schemas/Address'
+
+    CreateReservationRequest:
+      type: object
+      required:
+        - productId
+        - warehouseId
+        - referenceType
+        - referenceId
+        - quantity
+      properties:
+        productId:
+          type: string
+          format: uuid
+        warehouseId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+          enum: [order, invoice]
+        referenceId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: string
+              message:
+                type: string
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: string
+                default: UNAUTHORIZED
+              message:
+                type: string
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: string
+                default: NOT_FOUND
+              message:
+                type: string
+
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: string
+                default: ALREADY_EXISTS
+              message:
+                type: string
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []

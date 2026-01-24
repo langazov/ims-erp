@@ -1,0 +1,420 @@
+# Default values for ERP System
+# This is a YAML-formatted file
+
+global:
+  imageRegistry: ghcr.io
+  imagePullSecrets:
+    - name: registry-secret
+
+# Application Configuration
+config:
+  appName: "erp-system"
+  environment: "staging"
+  logLevel: "info"
+  logFormat: "json"
+
+# Client Command Service
+clientCommandService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-client-command-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+    targetMemoryUtilizationPercentage: 70
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# Auth Service
+authService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-auth-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+
+# Client Query Service
+clientQueryService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-client-query-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# Invoice Service
+invoiceService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-invoice-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# Payment Service
+paymentService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-payment-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# Product Service
+productService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-product-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+    elasticsearch:
+      host: "elasticsearch-erp-system"
+      port: 9200
+
+# Order Service
+orderService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-order-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# Inventory Service
+inventoryService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: ghcr.io/ims-erp/system-inventory-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 60
+  config:
+    mongodb:
+      host: "mongodb-erp-system"
+      port: 27017
+      database: "erp_system"
+    redis:
+      host: "redis-erp-system"
+      port: 6379
+    nats:
+      host: "nats-erp-system"
+      port: 4222
+
+# API Gateway
+apiGateway:
+  enabled: true
+  replicaCount: 5
+  image:
+    repository: ghcr.io/ims-erp/system-api-gateway
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  autoscaling:
+    enabled: true
+    minReplicas: 5
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 70
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+  hosts:
+    - host: staging.erp.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+  tls: []
+
+# MongoDB (shared instance)
+mongodb:
+  enabled: true
+  architecture: replicaset
+  auth:
+    enabled: false
+  metrics:
+    enabled: true
+
+# Redis (shared instance)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+
+# NATS (shared instance)
+nats:
+  enabled: true
+  natsbox:
+    enabled: false
+  exporter:
+    enabled: true
+
+# MinIO (shared instance)
+minio:
+  enabled: true
+  mode: distributed
+  replicas: 4
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+
+# Elasticsearch (shared instance)
+elasticsearch:
+  enabled: true
+  global:
+    kibanaEnabled: false
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+
+# Monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: false
+
+# Security
+security:
+  rbac:
+    create: true
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+# Network Policies
+networkPolicies:
+  enabled: true
+
+# Pod Disruption Budgets
+podDisruptionBudgets:
+  enabled: true
+  minAvailable: 2

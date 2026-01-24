@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: erp-system-config
+  namespace: erp-system
+data:
+  APP_NAME: "client-command-service"
+  APP_PORT: "8080"
+  ENVIRONMENT: "production"
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+  MONGODB_URI: "mongodb://mongodb-erp-system:27017"
+  MONGODB_DATABASE: "erp_system"
+  REDIS_MODE: "standalone"
+  REDIS_ADDRESSES: "redis-erp-system:6379"
+  NATS_URLS: "nats://nats-erp-system:4222"
+  NATS_JETSTREAM_ENABLED: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: erp-system-secrets
+  namespace: erp-system
+type: Opaque
+stringData:
+  JWT_SECRET: "your-256-bit-secret-key-change-in-production"
+  ENCRYPTION_KEY: "your-encryption-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-command-service
+  namespace: erp-system
+  labels:
+    app: client-command-service
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: client-command-service
+  template:
+    metadata:
+      labels:
+        app: client-command-service
+        version: v1
+    spec:
+      serviceAccountName: erp-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: client-command-service
+        image: erp/client-command-service:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: erp-system-config
+        - secretRef:
+            name: erp-system-secrets
+        env:
+        - name: GOMEMLIMIT
+          value: "512MiB"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: client-command-service
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: client-command-service
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: client-command-service
+  namespace: erp-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: client-command-service
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-command-service
+  namespace: erp-system
+  labels:
+    app: client-command-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: client-command-service
