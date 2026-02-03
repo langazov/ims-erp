@@ -55,11 +55,18 @@ func (g *APIGateway) buildRouter() http.Handler {
 	mux.HandleFunc("/ready", g.readinessHandler)
 	mux.HandleFunc("/live", g.livenessHandler)
 	mux.HandleFunc("/api/v1/auth/", g.authHandler)
+	mux.HandleFunc("/api/v1/auth", g.authHandler)
 	mux.HandleFunc("/api/v1/clients/", g.clientsHandler)
+	mux.HandleFunc("/api/v1/clients", g.clientsHandler)
 	mux.HandleFunc("/api/v1/invoices/", g.invoicesHandler)
 	mux.HandleFunc("/api/v1/payments/", g.paymentsHandler)
 	mux.HandleFunc("/api/v1/products/", g.productsHandler)
+	mux.HandleFunc("/api/v1/products", g.productsHandler)
 	mux.HandleFunc("/api/v1/orders/", g.ordersHandler)
+	mux.HandleFunc("/api/v1/orders", g.ordersHandler)
+	mux.HandleFunc("/api/v1/users", g.usersHandler)
+	mux.HandleFunc("/api/v1/inventory/", g.inventoryHandler)
+	mux.HandleFunc("/api/v1/inventory", g.inventoryHandler)
 
 	return mux
 }
@@ -164,6 +171,14 @@ func (g *APIGateway) ordersHandler(w http.ResponseWriter, r *http.Request) {
 	g.proxyRequest(w, r, "http://localhost:8086")
 }
 
+func (g *APIGateway) usersHandler(w http.ResponseWriter, r *http.Request) {
+	g.proxyRequest(w, r, "http://localhost:8081")
+}
+
+func (g *APIGateway) inventoryHandler(w http.ResponseWriter, r *http.Request) {
+	g.proxyRequest(w, r, "http://localhost:8084")
+}
+
 func (g *APIGateway) proxyRequest(w http.ResponseWriter, r *http.Request, target string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -181,9 +196,46 @@ func (g *APIGateway) proxyRequest(w http.ResponseWriter, r *http.Request, target
 	proxy.ServeHTTP(w, r)
 }
 
+func (g *APIGateway) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		allowedOrigins := []string{
+			"http://localhost:5173",
+			"http://localhost:5178",
+			"http://localhost:5174",
+			"http://localhost:5175",
+			"http://localhost:5176",
+			"http://localhost:5177",
+		}
+
+		isAllowed := false
+		for _, o := range allowedOrigins {
+			if origin == o {
+				isAllowed = true
+				break
+			}
+		}
+
+		if isAllowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (g *APIGateway) authenticationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/auth/") || r.URL.Path == "/health" || r.URL.Path == "/ready" || r.URL.Path == "/live" {
+		if r.Method == "OPTIONS" || strings.HasPrefix(r.URL.Path, "/api/v1/auth/") || r.URL.Path == "/health" || r.URL.Path == "/ready" || r.URL.Path == "/live" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -233,6 +285,7 @@ func main() {
 	gateway := NewAPIGateway(cfg, log)
 
 	mux := gateway.buildRouter()
+	mux = gateway.corsMiddleware(mux)
 	mux = gateway.authenticationMiddleware(mux)
 
 	srv := &http.Server{

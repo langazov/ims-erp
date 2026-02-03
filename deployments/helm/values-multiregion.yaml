@@ -1,0 +1,389 @@
+# Multi-region deployment configuration for IMS ERP System
+# This values file configures the system for deployment across 3 geographic regions
+
+global:
+  environment: production
+  replicaCount: 3
+  
+  # Multi-region configuration
+  regions:
+    - name: us-east-1
+      location: "US East (N. Virginia)"
+      priority: 1
+    - name: eu-west-1
+      location: "EU (Ireland)"
+      priority: 2
+    - name: ap-southeast-1
+      location: "Asia Pacific (Singapore)"
+      priority: 3
+
+# MongoDB Replica Set Configuration
+mongodb:
+  enabled: true
+  architecture: replicaset
+  
+  replicaSet:
+    name: rs0
+    replicas:
+      primary: 1
+      secondary: 2
+      arbiter: 1
+  
+  # Cross-region replica configuration
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: mongodb
+          topologyKey: topology.kubernetes.io/zone
+  
+  # Multi-region nodes
+  nodes:
+    - name: mongo-primary
+      region: us-east-1
+      priority: 10
+      votes: 1
+    - name: mongo-secondary-1
+      region: eu-west-1
+      priority: 5
+      votes: 1
+    - name: mongo-secondary-2
+      region: ap-southeast-1
+      priority: 5
+      votes: 1
+    - name: mongo-arbiter
+      region: us-east-1
+      priority: 1
+      votes: 1
+      arbiterOnly: true
+  
+  persistence:
+    enabled: true
+    storageClass: "fast-ssd"
+    size: 500Gi
+    accessModes:
+      - ReadWriteOnce
+  
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "4"
+    limits:
+      memory: "16Gi"
+      cpu: "8"
+  
+  # Data residency settings
+  security:
+    enableEncryption: true
+    encryptionKeySecret: mongodb-encryption-key
+    tls:
+      enabled: true
+      existingSecret: mongodb-tls-cert
+  
+  # Backup configuration
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retention: 30
+    storage:
+      type: s3
+      s3:
+        bucket: ims-erp-mongodb-backups
+        region: us-east-1
+        path: /backups
+
+# Redis Cluster with Cross-Region Replication
+redis:
+  enabled: true
+  architecture: cluster
+  
+  cluster:
+    nodes: 6
+    replicas: 1
+    
+  # Multi-region configuration
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: topology.kubernetes.io/region
+              operator: In
+              values:
+                - us-east-1
+                - eu-west-1
+                - ap-southeast-1
+  
+  # Cross-region replication
+  replication:
+    enabled: true
+    mode: active-active
+    syncTimeout: 1000
+    
+  persistence:
+    enabled: true
+    storageClass: "fast-ssd"
+    size: 100Gi
+    
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "2"
+    limits:
+      memory: "8Gi"
+      cpu: "4"
+  
+  # Redis Sentinel for HA
+  sentinel:
+    enabled: true
+    quorum: 2
+    downAfterMilliseconds: 5000
+    failoverTimeout: 60000
+    parallelSyncs: 1
+
+# NATS JetStream Geo-Replication
+nats:
+  enabled: true
+  
+  jetstream:
+    enabled: true
+    
+    # Multi-region stream configuration
+    streams:
+      - name: INVOICE_EVENTS
+        subjects: ["invoice.>"]
+        replicas: 3
+        retention: limits
+        maxMsgs: 1000000
+        maxBytes: 1073741824
+        maxAge: "7d"
+        storage: file
+        placement:
+          cluster: nats-cluster
+          tags:
+            - region:us-east-1
+            - region:eu-west-1
+            - region:ap-southeast-1
+      
+      - name: PAYMENT_EVENTS
+        subjects: ["payment.>"]
+        replicas: 3
+        retention: limits
+        maxMsgs: 1000000
+        maxBytes: 1073741824
+        maxAge: "7d"
+        storage: file
+      
+      - name: INVENTORY_EVENTS
+        subjects: ["inventory.>"]
+        replicas: 3
+        retention: limits
+        maxMsgs: 500000
+        maxBytes: 536870912
+        maxAge: "3d"
+        storage: file
+    
+    # Mirror configuration for cross-region replication
+    mirrors:
+      - name: INVOICE_EVENTS_MIRROR_EU
+        stream: INVOICE_EVENTS
+        source: nats://nats.us-east-1.svc:4222
+        filterSubject: "invoice.>"
+        
+      - name: INVOICE_EVENTS_MIRROR_AP
+        stream: INVOICE_EVENTS
+        source: nats://nats.us-east-1.svc:4222
+        filterSubject: "invoice.>"
+  
+  cluster:
+    enabled: true
+    replicas: 3
+    name: nats-cluster
+    
+    routes:
+      - nats://nats-0.nats.us-east-1.svc:6222
+      - nats://nats-0.nats.eu-west-1.svc:6222
+      - nats://nats-0.nats.ap-southeast-1.svc:6222
+  
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "2"
+    limits:
+      memory: "8Gi"
+      cpu: "4"
+
+# Load Balancer Geo-Routing Configuration
+ingress:
+  enabled: true
+  className: nginx
+  
+  annotations:
+    # Geo-routing annotations
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    
+    # SSL/TLS
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  
+  # Multi-region ingress configuration
+  multiRegion:
+    enabled: true
+    strategy: geo-dns
+    
+    regions:
+      - name: us-east-1
+        host: api-us.ims-erp.com
+        weight: 40
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+          
+      - name: eu-west-1
+        host: api-eu.ims-erp.com
+        weight: 30
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+          
+      - name: ap-southeast-1
+        host: api-ap.ims-erp.com
+        weight: 30
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+  
+  tls:
+    - secretName: ims-erp-tls
+      hosts:
+        - api.ims-erp.com
+        - api-us.ims-erp.com
+        - api-eu.ims-erp.com
+        - api-ap.ims-erp.com
+
+# Data Residency and Compliance Settings
+compliance:
+  enabled: true
+  
+  # GDPR compliance for EU region
+  gdpr:
+    enabled: true
+    regions:
+      - eu-west-1
+    dataRetention: "7y"
+    rightToBeForgotten: true
+    dataPortability: true
+    
+  # CCPA compliance for US region
+  ccpa:
+    enabled: true
+    regions:
+      - us-east-1
+    dataRetention: "7y"
+    doNotSell: true
+    
+  # Data localization requirements
+  dataLocalization:
+    enabled: true
+    rules:
+      - region: eu-west-1
+        dataTypes:
+          - personal_data
+          - financial_records
+        storage: local-only
+        
+      - region: ap-southeast-1
+        dataTypes:
+          - personal_data
+        storage: local-only
+
+# Service Mesh Configuration (Istio)
+serviceMesh:
+  enabled: true
+  
+  istio:
+    enabled: true
+    
+    # Multi-region traffic management
+    trafficManagement:
+      localityLbSetting:
+        enabled: true
+        distribute:
+          - from: us-east-1/*
+            to:
+              "us-east-1/*": 80
+              "eu-west-1/*": 10
+              "ap-southeast-1/*": 10
+          - from: eu-west-1/*
+            to:
+              "eu-west-1/*": 80
+              "us-east-1/*": 10
+              "ap-southeast-1/*": 10
+          - from: ap-southeast-1/*
+            to:
+              "ap-southeast-1/*": 80
+              "us-east-1/*": 10
+              "eu-west-1/*": 10
+      
+      outlierDetection:
+        consecutive5xxErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+
+# Monitoring and Observability
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    retention: 30d
+    storage: 100Gi
+    
+  grafana:
+    enabled: true
+    dashboards:
+      - multi-region-metrics
+      - cross-region-replication
+      - data-residency-compliance
+      
+  jaeger:
+    enabled: true
+    storage:
+      type: elasticsearch
+      options:
+        es:
+          server-urls: http://elasticsearch:9200
+
+# Backup and Disaster Recovery
+disasterRecovery:
+  enabled: true
+  
+  backup:
+    schedule: "0 */6 * * *"
+    retention: 168h
+    storage:
+      type: s3
+      s3:
+        bucket: ims-erp-dr-backups
+        region: us-east-1
+        
+  failover:
+    enabled: true
+    automatic: true
+    healthCheckInterval: 30s
+    failoverThreshold: 3
+    
+  recovery:
+    rpo: "5m"
+    rto: "15m"

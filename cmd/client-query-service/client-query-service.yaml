@@ -1,0 +1,31 @@
+app:
+  name: "client-query-service"
+  port: 8082
+  environment: "development"
+  shutdown_timeout: 30s
+  read_timeout: 30s
+  write_timeout: 30s
+
+mongodb:
+  uri: "mongodb://localhost:27017"
+  database: "erp_system"
+
+redis:
+  mode: "standalone"
+  addresses:
+    - "localhost:6379"
+
+nats:
+  urls:
+    - "localhost:4222"
+  jetstream:
+    enabled: true
+    stream_prefix: ""
+
+tracing:
+  enabled: false
+  exporter_type: "stdout"
+
+logging:
+  level: "debug"
+  format: "console"

@@ -19,6 +19,46 @@ import (
 	"github.com/ims-erp/system/pkg/tracer"
 )
 
+var allowedOrigins = []string{
+	"http://localhost:5173",
+	"http://localhost:5178",
+	"http://localhost:5174",
+	"http://localhost:5175",
+	"http://localhost:5176",
+	"http://localhost:5177",
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		isAllowed := false
+		for _, o := range allowedOrigins {
+			if origin == o {
+				isAllowed = true
+				break
+			}
+		}
+
+		if isAllowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 type RedisClientAdapter struct {
 	cache *repository.Cache
 }
@@ -137,9 +177,11 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/change-password", handleChangePassword(authService, log))
 	mux.HandleFunc("/api/v1/auth/me", handleMe(authService, log))
 
+	handler := corsMiddleware(mux)
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.App.Port),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  cfg.App.ReadTimeout,
 		WriteTimeout: cfg.App.WriteTimeout,
 	}

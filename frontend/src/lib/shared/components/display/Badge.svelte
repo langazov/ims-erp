@@ -35,7 +35,7 @@
         variant === 'blue' && 'bg-blue-500',
         variant === 'purple' && 'bg-purple-500'
       )}
-    />
+    ></span>
   {/if}
   <slot />
 </span>

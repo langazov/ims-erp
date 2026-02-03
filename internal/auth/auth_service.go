@@ -12,6 +12,8 @@ import (
 	"github.com/ims-erp/system/internal/repository"
 	apperr "github.com/ims-erp/system/pkg/errors"
 	"github.com/ims-erp/system/pkg/logger"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type AuthService struct {
@@ -434,7 +436,7 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {
 func (r *UserRepository) FindByEmail(ctx context.Context, email, tenantID string) (*domain.User, error) {
 	filter := map[string]interface{}{
 		"email":    email,
-		"tenantId": tenantID,
+		"tenantid": tenantID,
 	}
 	result, err := r.collection.FindOne(ctx, filter)
 	if err != nil {
@@ -443,7 +445,11 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email, tenantID string
 	if result == nil {
 		return nil, nil
 	}
-	return mapToUser(result)
+	userData, ok := result.(bson.M)
+	if !ok {
+		return nil, fmt.Errorf("invalid user data: got %T", result)
+	}
+	return mapToUser(userData)
 }
 
 func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User, error) {
@@ -455,11 +461,15 @@ func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User,
 	if result == nil {
 		return nil, nil
 	}
-	return mapToUser(result)
+	userData, ok := result.(bson.M)
+	if !ok {
+		return nil, fmt.Errorf("invalid user data")
+	}
+	return mapToUser(userData)
 }
 
 func (r *UserRepository) FindByTenant(ctx context.Context, tenantID string, page, pageSize int) ([]*domain.User, int64, error) {
-	filter := map[string]interface{}{"tenantId": tenantID}
+	filter := map[string]interface{}{"tenantid": tenantID}
 	results, err := r.collection.Find(ctx, filter)
 	if err != nil {
 		return nil, 0, err
@@ -467,7 +477,11 @@ func (r *UserRepository) FindByTenant(ctx context.Context, tenantID string, page
 
 	users := make([]*domain.User, 0, len(results))
 	for _, result := range results {
-		user, err := mapToUser(result)
+		userData, ok := result.(bson.M)
+		if !ok {
+			continue
+		}
+		user, err := mapToUser(userData)
 		if err != nil {
 			continue
 		}
@@ -477,45 +491,54 @@ func (r *UserRepository) FindByTenant(ctx context.Context, tenantID string, page
 	return users, int64(len(users)), nil
 }
 
-func mapToUser(data interface{}) (*domain.User, error) {
-	m, ok := data.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid user data")
-	}
-
+func mapToUser(data bson.M) (*domain.User, error) {
 	user := &domain.User{}
 
-	if id, ok := m["_id"].(string); ok {
-		user.ID = uuid.MustParse(id)
+	if idStr, ok := data["id"].(string); ok {
+		user.ID = uuid.MustParse(idStr)
+	} else if idBinary, ok := data["id"].(primitive.Binary); ok {
+		if idBinary.Subtype == 0x03 || len(idBinary.Data) == 16 {
+			if u, err := uuid.FromBytes(idBinary.Data); err == nil {
+				user.ID = u
+			}
+		}
 	}
-	if tenantID, ok := m["tenantId"].(string); ok {
-		user.TenantID = uuid.MustParse(tenantID)
+
+	if tenantIDStr, ok := data["tenantid"].(string); ok {
+		user.TenantID = uuid.MustParse(tenantIDStr)
+	} else if tenantBinary, ok := data["tenantid"].(primitive.Binary); ok {
+		if tenantBinary.Subtype == 0x03 || len(tenantBinary.Data) == 16 {
+			if u, err := uuid.FromBytes(tenantBinary.Data); err == nil {
+				user.TenantID = u
+			}
+		}
 	}
-	if email, ok := m["email"].(string); ok {
+
+	if email, ok := data["email"].(string); ok {
 		user.Email = email
 	}
-	if passwordHash, ok := m["passwordHash"].(string); ok {
+	if passwordHash, ok := data["passwordhash"].(string); ok {
 		user.PasswordHash = passwordHash
 	}
-	if firstName, ok := m["firstName"].(string); ok {
+	if firstName, ok := data["firstname"].(string); ok {
 		user.FirstName = firstName
 	}
-	if lastName, ok := m["lastName"].(string); ok {
+	if lastName, ok := data["lastname"].(string); ok {
 		user.LastName = lastName
 	}
-	if phone, ok := m["phone"].(string); ok {
+	if phone, ok := data["phone"].(string); ok {
 		user.Phone = phone
 	}
-	if role, ok := m["role"].(string); ok {
+	if role, ok := data["role"].(string); ok {
 		user.Role = role
 	}
-	if status, ok := m["status"].(string); ok {
+	if status, ok := data["status"].(string); ok {
 		user.Status = domain.UserStatus(status)
 	}
-	if tenantRole, ok := m["tenantRole"].(string); ok {
+	if tenantRole, ok := data["tenantrole"].(string); ok {
 		user.TenantRole = tenantRole
 	}
-	if permissions, ok := m["permissions"].([]interface{}); ok {
+	if permissions, ok := data["permissions"].([]interface{}); ok {
 		user.Permissions = make([]string, len(permissions))
 		for i, p := range permissions {
 			if s, ok := p.(string); ok {
@@ -523,10 +546,10 @@ func mapToUser(data interface{}) (*domain.User, error) {
 			}
 		}
 	}
-	if mfaEnabled, ok := m["mfaEnabled"].(bool); ok {
+	if mfaEnabled, ok := data["mfaenabled"].(bool); ok {
 		user.MFAEnabled = mfaEnabled
 	}
-	if loginAttempts, ok := m["loginAttempts"].(int64); ok {
+	if loginAttempts, ok := data["loginattempts"].(int64); ok {
 		user.LoginAttempts = int(loginAttempts)
 	}
 

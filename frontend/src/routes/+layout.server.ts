@@ -17,17 +17,61 @@ export const load: LayoutServerLoad = async ({ fetch, url }) => {
       source: { type: 'builtin', path: 'dashboard' },
       enabled: true
     },
-    // Add more built-in plugins here
-    // {
-    //   id: 'settings',
-    //   source: { type: 'builtin', path: 'settings' },
-    //   enabled: true
-    // },
-    // {
-    //   id: 'analytics',
-    //   source: { type: 'builtin', path: 'analytics' },
-    //   enabled: true
-    // },
+    {
+      id: 'menu',
+      source: { type: 'builtin', path: 'menu' },
+      enabled: true
+    },
+    {
+      id: 'clients',
+      source: { type: 'builtin', path: 'clients' },
+      enabled: true
+    },
+    {
+      id: 'users',
+      source: { type: 'builtin', path: 'users' },
+      enabled: true
+    },
+    {
+      id: 'products',
+      source: { type: 'builtin', path: 'products' },
+      enabled: true
+    },
+    {
+      id: 'inventory',
+      source: { type: 'builtin', path: 'inventory' },
+      enabled: true
+    },
+    {
+      id: 'warehouse',
+      source: { type: 'builtin', path: 'warehouse' },
+      enabled: true
+    },
+    {
+      id: 'orders',
+      source: { type: 'builtin', path: 'orders' },
+      enabled: true
+    },
+    {
+      id: 'invoices',
+      source: { type: 'builtin', path: 'invoices' },
+      enabled: true
+    },
+    {
+      id: 'payments',
+      source: { type: 'builtin', path: 'payments' },
+      enabled: true
+    },
+    {
+      id: 'documents',
+      source: { type: 'builtin', path: 'documents' },
+      enabled: true
+    },
+    {
+      id: 'settings',
+      source: { type: 'builtin', path: 'settings' },
+      enabled: true
+    },
   ];
   
   manifests.push(...builtinPlugins);
@@ -44,7 +88,7 @@ export const load: LayoutServerLoad = async ({ fetch, url }) => {
       manifests.push(...externalManifests);
     }
   } catch (error) {
-    console.warn('[Server] Failed to load external plugin manifests:', error);
+    console.warn('[Server] No external plugin manifests endpoint, skipping');
   }
   
   // ============================================================================

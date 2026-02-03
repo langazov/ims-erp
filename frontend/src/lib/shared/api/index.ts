@@ -20,7 +20,14 @@ class ApiClient {
   }
 
   private buildUrl(endpoint: string, params?: Record<string, string | number | boolean | undefined>): string {
-    const url = new URL(endpoint, this.baseUrl);
+    let url: URL;
+    if (endpoint.startsWith('http')) {
+      url = new URL(endpoint);
+    } else {
+      const baseUrl = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
+      const normalizedEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+      url = new URL(`${baseUrl}/${normalizedEndpoint}`, 'http://localhost');
+    }
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined && value !== '') {

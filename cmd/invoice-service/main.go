@@ -2,28 +2,50 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/ims-erp/system/internal/commands"
 	"github.com/ims-erp/system/internal/config"
+	"github.com/ims-erp/system/internal/domain"
+	"github.com/ims-erp/system/internal/queries"
+	"github.com/ims-erp/system/pkg/errors"
 	"github.com/ims-erp/system/pkg/logger"
 	"github.com/ims-erp/system/pkg/tracer"
 )
 
 type InvoiceService struct {
-	config *config.Config
-	logger *logger.Logger
+	config         *config.Config
+	logger         *logger.Logger
+	invoiceHandler *commands.InvoiceCommandHandler
+	queryHandler   *queries.InvoiceQueryHandler
+	invoiceRepo    commands.InvoiceRepository
+	publisher      commands.Publisher
 }
 
-func NewInvoiceService(cfg *config.Config, log *logger.Logger) *InvoiceService {
+func NewInvoiceService(
+	cfg *config.Config,
+	log *logger.Logger,
+	invoiceHandler *commands.InvoiceCommandHandler,
+	queryHandler *queries.InvoiceQueryHandler,
+	invoiceRepo commands.InvoiceRepository,
+	publisher commands.Publisher,
+) *InvoiceService {
 	return &InvoiceService{
-		config: cfg,
-		logger: log,
+		config:         cfg,
+		logger:         log,
+		invoiceHandler: invoiceHandler,
+		queryHandler:   queryHandler,
+		invoiceRepo:    invoiceRepo,
+		publisher:      publisher,
 	}
 }
 
@@ -36,11 +58,7 @@ func (s *InvoiceService) setupRoutes() http.Handler {
 	mux.HandleFunc("/metrics", s.metricsHandler)
 
 	mux.HandleFunc("/api/v1/invoices", s.handleInvoices)
-	mux.HandleFunc("/api/v1/invoices/", s.handleInvoiceByID)
-	mux.HandleFunc("/api/v1/invoices/", s.handleInvoiceLines)
-	mux.HandleFunc("/api/v1/invoices/", s.handleInvoicePayments)
-	mux.HandleFunc("/api/v1/invoices/", s.handleInvoiceSend)
-	mux.HandleFunc("/api/v1/invoices/", s.handleInvoicePDF)
+	mux.HandleFunc("/api/v1/invoices/", s.handleInvoiceOperations)
 	mux.HandleFunc("/api/v1/invoices/report/outstanding", s.handleOutstandingReport)
 	mux.HandleFunc("/api/v1/invoices/report/overdue", s.handleOverdueReport)
 	mux.HandleFunc("/api/v1/invoices/report/summary", s.handleSummaryReport)
@@ -89,173 +107,561 @@ func (s *InvoiceService) handleInvoices(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (s *InvoiceService) handleInvoiceByID(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) handleInvoiceOperations(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/invoices/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Invalid invoice ID", http.StatusBadRequest)
+		return
+	}
+
+	invoiceID := parts[0]
+
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "lines":
+			s.handleInvoiceLines(w, r, invoiceID)
+		case "payments":
+			s.handleInvoicePayments(w, r, invoiceID)
+		case "send":
+			s.handleInvoiceSend(w, r, invoiceID)
+		case "pdf":
+			s.handleInvoicePDF(w, r, invoiceID)
+		default:
+			http.Error(w, "Not found", http.StatusNotFound)
+		}
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		s.getInvoice(w, r)
-	case http.MethodPut:
-		s.updateInvoice(w, r)
+		s.getInvoice(w, r, invoiceID)
+	case http.MethodPut, http.MethodPatch:
+		s.updateInvoice(w, r, invoiceID)
 	case http.MethodDelete:
-		s.deleteInvoice(w, r)
+		s.deleteInvoice(w, r, invoiceID)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *InvoiceService) handleInvoiceLines(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) handleInvoiceLines(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	if r.Method == http.MethodPost {
-		s.addInvoiceLine(w, r)
+		s.addInvoiceLine(w, r, invoiceID)
 	} else if r.Method == http.MethodDelete {
-		s.removeInvoiceLine(w, r)
+		s.removeInvoiceLine(w, r, invoiceID)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *InvoiceService) handleInvoicePayments(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) handleInvoicePayments(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	if r.Method == http.MethodPost {
-		s.recordPayment(w, r)
+		s.recordPayment(w, r, invoiceID)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *InvoiceService) handleInvoiceSend(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) handleInvoiceSend(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	if r.Method == http.MethodPost {
-		s.sendInvoice(w, r)
+		s.sendInvoice(w, r, invoiceID)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *InvoiceService) handleInvoicePDF(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) handleInvoicePDF(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	if r.Method == http.MethodGet {
-		s.generatePDF(w, r)
-	} else {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *InvoiceService) handleOutstandingReport(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.getOutstandingReport(w, r)
-	} else {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *InvoiceService) handleOverdueReport(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.getOverdueReport(w, r)
-	} else {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *InvoiceService) handleSummaryReport(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.getSummaryReport(w, r)
+		s.generatePDF(w, r, invoiceID)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *InvoiceService) listInvoices(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
 	clientID := r.URL.Query().Get("clientId")
 	status := r.URL.Query().Get("status")
 	page := parseInt(r.URL.Query().Get("page"), 1)
-	pageSize := parseInt(r.URL.Query().Get("pageSize"), 50)
+	pageSize := parseInt(r.URL.Query().Get("pageSize"), 20)
 
-	_ = tenantID
-	_ = clientID
-	_ = status
-	_ = page
-	_ = pageSize
+	query := &queries.ListInvoicesQuery{
+		TenantID: tenantID,
+		ClientID: clientID,
+		Status:   status,
+		Page:     page,
+		PageSize: pageSize,
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"invoices": [], "total": 0, "page": %d, "pageSize": %d}`, page, pageSize)
+	result, err := s.queryHandler.ListInvoices(ctx, query)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 func (s *InvoiceService) createInvoice(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, `{"message": "Invoice created", "id": "%s"}`, generateUUID())
+	ctx := r.Context()
+
+	var req struct {
+		TenantID    string                 `json:"tenantId"`
+		ClientID    string                 `json:"clientId"`
+		UserID      string                 `json:"userId"`
+		Type        string                 `json:"type"`
+		Currency    string                 `json:"currency"`
+		PaymentTerm string                 `json:"paymentTerm"`
+		IssueDate   string                 `json:"issueDate"`
+		DueDate     string                 `json:"dueDate"`
+		Notes       string                 `json:"notes"`
+		Terms       string                 `json:"terms"`
+		Data        map[string]interface{} `json:"data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, errors.InvalidArgument("invalid request body"))
+		return
+	}
+
+	if req.TenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+	if req.ClientID == "" {
+		s.writeError(w, errors.InvalidArgument("clientId is required"))
+		return
+	}
+	if req.UserID == "" {
+		req.UserID = "system"
+	}
+
+	data := req.Data
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	data["clientId"] = req.ClientID
+	data["type"] = req.Type
+	data["currency"] = req.Currency
+	data["paymentTerm"] = req.PaymentTerm
+	data["issueDate"] = req.IssueDate
+	data["dueDate"] = req.DueDate
+	data["notes"] = req.Notes
+	data["terms"] = req.Terms
+
+	cmd := commands.NewCommand("createInvoice", req.TenantID, "", req.UserID, data)
+
+	invoice, err := s.invoiceHandler.HandleCreateInvoice(ctx, cmd)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, invoice)
 }
 
-func (s *InvoiceService) getInvoice(w http.ResponseWriter, r *http.Request) {
-	invoiceID := r.URL.Query().Get("invoiceId")
-	_ = invoiceID
+func (s *InvoiceService) getInvoice(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"invoice": null}`)
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	query := &queries.GetInvoiceByIDQuery{
+		InvoiceID: invoiceID,
+		TenantID:  tenantID,
+	}
+
+	invoice, err := s.queryHandler.GetInvoiceByID(ctx, query)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	if invoice == nil {
+		s.writeError(w, errors.NotFound("invoice not found"))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, invoice)
 }
 
-func (s *InvoiceService) updateInvoice(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"message": "Invoice updated"}`)
+func (s *InvoiceService) updateInvoice(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	var req struct {
+		UserID string                 `json:"userId"`
+		Action string                 `json:"action"`
+		Data   map[string]interface{} `json:"data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, errors.InvalidArgument("invalid request body"))
+		return
+	}
+
+	if req.UserID == "" {
+		req.UserID = "system"
+	}
+
+	cmd := commands.NewCommand("", tenantID, invoiceID, req.UserID, req.Data)
+
+	var invoice *domain.Invoice
+	var err error
+
+	switch req.Action {
+	case "finalize":
+		cmd.Type = "finalizeInvoice"
+		invoice, err = s.invoiceHandler.HandleFinalizeInvoice(ctx, cmd)
+	case "void", "cancel":
+		cmd.Type = "voidInvoice"
+		invoice, err = s.invoiceHandler.HandleVoidInvoice(ctx, cmd)
+	case "send":
+		cmd.Type = "sendInvoice"
+		invoice, err = s.invoiceHandler.HandleSendInvoice(ctx, cmd)
+	default:
+		s.writeError(w, errors.InvalidArgument("invalid action: must be 'finalize', 'void', 'cancel', or 'send'"))
+		return
+	}
+
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, invoice)
 }
 
-func (s *InvoiceService) deleteInvoice(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) deleteInvoice(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"message": "Invoice deleted"}`)
 }
 
-func (s *InvoiceService) addInvoiceLine(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, `{"message": "Line added"}`)
+func (s *InvoiceService) addInvoiceLine(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	var req struct {
+		UserID      string                 `json:"userId"`
+		Description string                 `json:"description"`
+		Quantity    string                 `json:"quantity"`
+		UnitPrice   string                 `json:"unitPrice"`
+		Discount    string                 `json:"discount"`
+		TaxRate     string                 `json:"taxRate"`
+		ProductID   string                 `json:"productId"`
+		SortOrder   int                    `json:"sortOrder"`
+		Data        map[string]interface{} `json:"data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, errors.InvalidArgument("invalid request body"))
+		return
+	}
+
+	if req.UserID == "" {
+		req.UserID = "system"
+	}
+
+	data := req.Data
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	data["description"] = req.Description
+	data["quantity"] = req.Quantity
+	data["unitPrice"] = req.UnitPrice
+	data["discount"] = req.Discount
+	data["taxRate"] = req.TaxRate
+	data["productId"] = req.ProductID
+	data["sortOrder"] = float64(req.SortOrder)
+
+	cmd := commands.NewCommand("addLineItem", tenantID, invoiceID, req.UserID, data)
+
+	invoice, err := s.invoiceHandler.HandleAddLineItem(ctx, cmd)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, invoice)
 }
 
-func (s *InvoiceService) removeInvoiceLine(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"message": "Line removed"}`)
+func (s *InvoiceService) removeInvoiceLine(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	lineID := r.URL.Query().Get("lineId")
+	if lineID == "" {
+		var req struct {
+			LineID string `json:"lineId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			lineID = req.LineID
+		}
+	}
+
+	if lineID == "" {
+		s.writeError(w, errors.InvalidArgument("lineId is required"))
+		return
+	}
+
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		userID = "system"
+	}
+
+	data := map[string]interface{}{
+		"lineId": lineID,
+	}
+
+	cmd := commands.NewCommand("removeLineItem", tenantID, invoiceID, userID, data)
+
+	invoice, err := s.invoiceHandler.HandleRemoveLineItem(ctx, cmd)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, invoice)
 }
 
-func (s *InvoiceService) recordPayment(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, `{"message": "Payment recorded"}`)
+func (s *InvoiceService) recordPayment(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	var req struct {
+		UserID        string `json:"userId"`
+		Amount        string `json:"amount"`
+		PaymentMethod string `json:"paymentMethod"`
+		Reference     string `json:"reference"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, errors.InvalidArgument("invalid request body"))
+		return
+	}
+
+	if req.Amount == "" {
+		s.writeError(w, errors.InvalidArgument("amount is required"))
+		return
+	}
+
+	if req.UserID == "" {
+		req.UserID = "system"
+	}
+
+	data := map[string]interface{}{
+		"amount":        req.Amount,
+		"paymentMethod": req.PaymentMethod,
+		"reference":     req.Reference,
+	}
+
+	cmd := commands.NewCommand("recordPayment", tenantID, invoiceID, req.UserID, data)
+
+	invoice, err := s.invoiceHandler.HandleRecordPayment(ctx, cmd)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, invoice)
 }
 
-func (s *InvoiceService) sendInvoice(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"message": "Invoice sent"}`)
+func (s *InvoiceService) sendInvoice(w http.ResponseWriter, r *http.Request, invoiceID string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	var req struct {
+		UserID string `json:"userId"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.UserID = r.URL.Query().Get("userId")
+	}
+
+	if req.UserID == "" {
+		req.UserID = "system"
+	}
+
+	data := make(map[string]interface{})
+
+	cmd := commands.NewCommand("sendInvoice", tenantID, invoiceID, req.UserID, data)
+
+	invoice, err := s.invoiceHandler.HandleSendInvoice(ctx, cmd)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, invoice)
 }
 
-func (s *InvoiceService) generatePDF(w http.ResponseWriter, r *http.Request) {
+func (s *InvoiceService) generatePDF(w http.ResponseWriter, r *http.Request, invoiceID string) {
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("%PDF-1.4 Invoice PDF Placeholder"))
 }
 
-func (s *InvoiceService) getOutstandingReport(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	_ = tenantID
+func (s *InvoiceService) handleOutstandingReport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"report": "outstanding", "generatedAt": "%s", "totalOutstanding": 0, "invoices": []}`, time.Now().UTC())
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	page := parseInt(r.URL.Query().Get("page"), 1)
+	pageSize := parseInt(r.URL.Query().Get("pageSize"), 20)
+
+	query := &queries.GetOverdueInvoicesQuery{
+		TenantID: tenantID,
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	result, err := s.queryHandler.GetOverdueInvoices(ctx, query)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
 }
 
-func (s *InvoiceService) getOverdueReport(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	_ = tenantID
+func (s *InvoiceService) handleOverdueReport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"report": "overdue", "generatedAt": "%s", "totalOverdue": 0, "invoices": []}`, time.Now().UTC())
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	page := parseInt(r.URL.Query().Get("page"), 1)
+	pageSize := parseInt(r.URL.Query().Get("pageSize"), 20)
+
+	query := &queries.GetOverdueInvoicesQuery{
+		TenantID: tenantID,
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	result, err := s.queryHandler.GetOverdueInvoices(ctx, query)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
 }
 
-func (s *InvoiceService) getSummaryReport(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.URL.Query().Get("tenantId")
-	startDate := r.URL.Query().Get("startDate")
-	endDate := r.URL.Query().Get("endDate")
+func (s *InvoiceService) handleSummaryReport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 
-	_ = tenantID
-	_ = startDate
-	_ = endDate
+	tenantID := r.URL.Query().Get("tenantId")
+	if tenantID == "" {
+		s.writeError(w, errors.InvalidArgument("tenantId is required"))
+		return
+	}
+
+	startDateStr := r.URL.Query().Get("startDate")
+	endDateStr := r.URL.Query().Get("endDate")
+
+	query := &queries.GetInvoiceStatsQuery{
+		TenantID: tenantID,
+	}
+
+	if startDateStr != "" {
+		if startDate, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			query.StartDate = startDate
+		}
+	}
+
+	if endDateStr != "" {
+		if endDate, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			query.EndDate = endDate
+		}
+	}
+
+	stats, err := s.queryHandler.GetInvoiceStats(ctx, query)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *InvoiceService) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		s.logger.Error("Failed to encode JSON response", "error", err)
+	}
+}
+
+func (s *InvoiceService) writeError(w http.ResponseWriter, err error) {
+	var statusCode int
+	var errorResponse map[string]interface{}
+
+	if appErr, ok := err.(*errors.Error); ok {
+		statusCode = appErr.StatusCode()
+		errorResponse = map[string]interface{}{
+			"error":   appErr.Code,
+			"message": appErr.Message,
+		}
+		if appErr.Details != nil {
+			errorResponse["details"] = appErr.Details
+		}
+	} else {
+		statusCode = http.StatusInternalServerError
+		errorResponse = map[string]interface{}{
+			"error":   "INTERNAL_ERROR",
+			"message": err.Error(),
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"report": "summary", "generatedAt": "%s", "totalInvoiced": 0, "totalPaid": 0, "totalOutstanding": 0, "totalOverdue": 0}`, time.Now().UTC())
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(errorResponse)
 }
 
 func main() {
@@ -290,7 +696,26 @@ func main() {
 	}
 	defer tr.Shutdown(context.Background())
 
-	service := NewInvoiceService(cfg, log)
+	var invoiceRepo commands.InvoiceRepository
+	var publisher commands.Publisher
+
+	invoiceCounter := &invoiceNumberCounter{}
+
+	invoiceHandler := commands.NewInvoiceCommandHandler(
+		invoiceRepo,
+		nil,
+		publisher,
+		log,
+		invoiceCounter,
+	)
+
+	queryHandler := queries.NewInvoiceQueryHandler(
+		nil,
+		nil,
+		log,
+	)
+
+	service := NewInvoiceService(cfg, log, invoiceHandler, queryHandler, invoiceRepo, publisher)
 	mux := service.setupRoutes()
 
 	srv := &http.Server{
@@ -335,6 +760,8 @@ func parseInt(s string, defaultVal int) int {
 	return val
 }
 
-func generateUUID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+type invoiceNumberCounter struct{}
+
+func (c *invoiceNumberCounter) GetNextInvoiceNumber(ctx context.Context, tenantID uuid.UUID, year int) (string, error) {
+	return fmt.Sprintf("INV-%d-%06d", year, time.Now().UnixNano()%1000000), nil
 }

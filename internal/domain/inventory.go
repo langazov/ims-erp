@@ -654,3 +654,37 @@ type OperationRepository interface {
 	FindPending(ctx context.Context, warehouseID uuid.UUID) ([]*WarehouseOperation, error)
 	FindByReference(ctx context.Context, referenceType string, referenceID uuid.UUID) ([]*WarehouseOperation, error)
 }
+
+type InventoryRepository interface {
+	Create(ctx context.Context, item *InventoryItem) error
+	Update(ctx context.Context, item *InventoryItem) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	FindByID(ctx context.Context, id uuid.UUID) (*InventoryItem, error)
+	FindByProductAndWarehouse(ctx context.Context, productID, warehouseID uuid.UUID) (*InventoryItem, error)
+	FindByWarehouse(ctx context.Context, warehouseID uuid.UUID) ([]*InventoryItem, error)
+	FindByProduct(ctx context.Context, productID uuid.UUID) ([]*InventoryItem, error)
+	FindLowStock(ctx context.Context, tenantID uuid.UUID) ([]*InventoryItem, error)
+}
+
+type ReservationRepository interface {
+	Create(ctx context.Context, reservation *StockReservation) error
+	Update(ctx context.Context, reservation *StockReservation) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	FindByID(ctx context.Context, id uuid.UUID) (*StockReservation, error)
+	FindByProduct(ctx context.Context, productID uuid.UUID) ([]*StockReservation, error)
+	FindByWarehouse(ctx context.Context, warehouseID uuid.UUID) ([]*StockReservation, error)
+	FindByReference(ctx context.Context, referenceType string, referenceID uuid.UUID) ([]*StockReservation, error)
+	FindActiveByProduct(ctx context.Context, productID uuid.UUID) ([]*StockReservation, error)
+	FindExpired(ctx context.Context, tenantID uuid.UUID) ([]*StockReservation, error)
+}
+
+type TransactionRepository interface {
+	Create(ctx context.Context, transaction *InventoryTransaction) error
+	Update(ctx context.Context, transaction *InventoryTransaction) error
+	FindByID(ctx context.Context, id uuid.UUID) (*InventoryTransaction, error)
+	FindByProduct(ctx context.Context, productID uuid.UUID) ([]*InventoryTransaction, error)
+	FindByWarehouse(ctx context.Context, warehouseID uuid.UUID) ([]*InventoryTransaction, error)
+	FindByReference(ctx context.Context, referenceType string, referenceID uuid.UUID) ([]*InventoryTransaction, error)
+	FindByMovementType(ctx context.Context, movementType MovementType) ([]*InventoryTransaction, error)
+	FindByDateRange(ctx context.Context, start, end time.Time) ([]*InventoryTransaction, error)
+}

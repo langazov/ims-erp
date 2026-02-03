@@ -1,36 +1,63 @@
 <!-- src/routes/+layout.svelte -->
 <script lang="ts">
-  import { onMount, setContext } from 'svelte';
+  import { onMount, setContext, onDestroy } from 'svelte';
   import { writable, type Writable } from 'svelte/store';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { createCore, type Core, type PluginManifestEntry } from '$lib/core';
   import type { LayoutData } from './$types';
+  import Sidebar from '$lib/shared/components/layout/Sidebar.svelte';
+  import { auth } from '$lib/shared/stores/auth';
   import '../app.css';
   
   export let data: LayoutData;
   
-  // Create core instance
-  const core = createCore();
-  
-  // Loading state
+  let core: Core | null = null;
   const pluginsLoaded: Writable<boolean> = writable(false);
   const loadingError: Writable<Error | null> = writable(null);
   const loadedPluginIds: Writable<string[]> = writable([]);
   
-  // Set contexts for child components
-  setContext('core', core);
-  setContext('coreApi', core.api);
-  setContext('pluginsLoaded', pluginsLoaded);
-  setContext('messages', core.messages);
-  setContext('routes', core.routes);
-  setContext('state', core.state);
-  setContext('events', core.events);
+  let sidebarCollapsed = false;
+  let authInitialized = false;
   
-  onMount(async () => {
+  $: path = String($page.url.pathname);
+  $: isAuthPage = path === '/login' || path.startsWith('/login/') || 
+                  path === '/register' || path.startsWith('/register/') ||
+                  path === '/forgot-password' || path.startsWith('/forgot-password/');
+  
+  onMount(() => {
+    if (isAuthPage) {
+      authInitialized = true;
+      return;
+    }
+    
+    core = createCore();
+    
+    setContext('core', core);
+    setContext('coreApi', core.api);
+    setContext('pluginsLoaded', pluginsLoaded);
+    setContext('messages', core.messages);
+    setContext('routes', core.routes);
+    setContext('state', core.state);
+    setContext('events', core.events);
+    
+    const authState = auth.init();
+    authInitialized = true;
+
+    if (!authState.isAuthenticated) {
+      goto('/login');
+      return;
+    }
+
+    initializePlugins();
+  });
+
+  async function initializePlugins() {
+    if (!core) return;
+    
     try {
-      // Initialize core with plugin manifests
       await core.initialize(data.pluginManifests);
       
-      // Update loaded plugins list
       const plugins = core.registry.getAll();
       loadedPluginIds.set(plugins.map(p => p.manifest.id));
       
@@ -41,15 +68,9 @@
       console.error('[App] Failed to initialize plugins:', error);
       loadingError.set(error as Error);
     }
-    
-    // Cleanup on unmount
-    return () => {
-      core.destroy();
-    };
-  });
+  }
   
-  // Subscribe to plugin lifecycle events
-  $: if ($pluginsLoaded) {
+  $: if ($pluginsLoaded && core) {
     core.registry.onLoad((plugin) => {
       loadedPluginIds.update(ids => [...ids, plugin.manifest.id]);
     });
@@ -58,6 +79,12 @@
       loadedPluginIds.update(ids => ids.filter(id => id !== pluginId));
     });
   }
+
+  onDestroy(async () => {
+    if (core) {
+      await core.destroy();
+    }
+  });
 </script>
 
 <svelte:head>
@@ -65,17 +92,26 @@
   <meta name="description" content="Modular SvelteKit application with dynamic plugin loading" />
 </svelte:head>
 
-{#if $loadingError}
+{#if isAuthPage}
+  <slot />
+{:else if $loadingError}
   <div class="error-container">
     <div class="error-content">
       <h1>Failed to Load Application</h1>
       <p>{$loadingError.message}</p>
-      <button on:click={() => window.location.reload()}>
+      <button onclick={() => window.location.reload()}>
         Retry
       </button>
     </div>
   </div>
-{:else if !$pluginsLoaded}
+{:else if $pluginsLoaded}
+  <div class="app-layout">
+    <Sidebar bind:collapsed={sidebarCollapsed} pluginManifests={data.pluginManifests} />
+    <main class="main-content" class:sidebar-collapsed={sidebarCollapsed}>
+      <slot />
+    </main>
+  </div>
+{:else if authInitialized}
   <div class="loading-container">
     <div class="loading-content">
       <div class="spinner"></div>
@@ -83,8 +119,11 @@
     </div>
   </div>
 {:else}
-  <div class="app-container">
-    <slot />
+  <div class="loading-container">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
   </div>
 {/if}
 
@@ -101,8 +140,21 @@
     -moz-osx-font-smoothing: grayscale;
   }
   
-  .app-container {
+  .app-layout {
+    display: flex;
     min-height: 100vh;
+  }
+  
+  .main-content {
+    flex: 1;
+    margin-left: 260px;
+    transition: margin-left 0.3s ease;
+    background: #f8fafc;
+    min-height: 100vh;
+  }
+  
+  .main-content.sidebar-collapsed {
+    margin-left: 72px;
   }
   
   .loading-container,

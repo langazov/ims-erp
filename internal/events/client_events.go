@@ -438,3 +438,15 @@ func getMap(data map[string]interface{}, key string) map[string]interface{} {
 	}
 	return nil
 }
+
+func getTime(data map[string]interface{}, key string) time.Time {
+	if v, ok := data[key].(time.Time); ok {
+		return v
+	}
+	if v, ok := data[key].(string); ok {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}

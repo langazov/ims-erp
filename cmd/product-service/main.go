@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,46 @@ import (
 	"github.com/ims-erp/system/pkg/logger"
 	"github.com/ims-erp/system/pkg/tracer"
 )
+
+var allowedOrigins = []string{
+	"http://localhost:5173",
+	"http://localhost:5178",
+	"http://localhost:5174",
+	"http://localhost:5175",
+	"http://localhost:5176",
+	"http://localhost:5177",
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		isAllowed := false
+		for _, o := range allowedOrigins {
+			if origin == o {
+				isAllowed = true
+				break
+			}
+		}
+
+		if isAllowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 type ProductService struct {
 	config *config.Config
@@ -36,17 +77,40 @@ func (s *ProductService) setupRoutes() http.Handler {
 	mux.HandleFunc("/metrics", s.metricsHandler)
 
 	mux.HandleFunc("/api/v1/products", s.handleProducts)
-	mux.HandleFunc("/api/v1/products/", s.handleProductByID)
-	mux.HandleFunc("/api/v1/products/", s.handleProductVariants)
-	mux.HandleFunc("/api/v1/products/", s.handleProductPricing)
-	mux.HandleFunc("/api/v1/products/", s.handleProductInventory)
-	mux.HandleFunc("/api/v1/products/", s.handleProductImages)
+	mux.HandleFunc("/api/v1/products/", s.handleProductRouter)
 	mux.HandleFunc("/api/v1/products/search", s.handleSearch)
 	mux.HandleFunc("/api/v1/products/categories", s.handleCategories)
 	mux.HandleFunc("/api/v1/products/brands", s.handleBrands)
 	mux.HandleFunc("/api/v1/products/report/valuation", s.handleValuationReport)
 
 	return mux
+}
+
+func (s *ProductService) handleProductRouter(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	idPattern := "/api/v1/products/"
+	variantsPattern := "/api/v1/products//variants"
+	pricingPattern := "/api/v1/products//pricing"
+	inventoryPattern := "/api/v1/products//inventory"
+	imagesPattern := "/api/v1/products//images"
+
+	switch {
+	case strings.HasPrefix(path, variantsPattern):
+		s.handleProductVariants(w, r)
+	case strings.HasPrefix(path, pricingPattern):
+		s.handleProductPricing(w, r)
+	case strings.HasPrefix(path, inventoryPattern):
+		s.handleProductInventory(w, r)
+	case strings.HasPrefix(path, imagesPattern):
+		s.handleProductImages(w, r)
+	case strings.HasPrefix(path, idPattern):
+		id := strings.TrimPrefix(path, idPattern)
+		id = strings.Split(id, "/")[0]
+		r.URL.Query().Set("productId", id)
+		s.handleProductByID(w, r)
+	default:
+		http.Error(w, "Not found", http.StatusNotFound)
+	}
 }
 
 func (s *ProductService) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -334,10 +398,11 @@ func main() {
 
 	service := NewProductService(cfg, log)
 	mux := service.setupRoutes()
+	handler := corsMiddleware(mux)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.App.Port),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  cfg.App.ReadTimeout,
 		WriteTimeout: cfg.App.WriteTimeout,
 	}

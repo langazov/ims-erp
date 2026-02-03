@@ -41,6 +41,10 @@
     dispatch('focus', event);
   }
 
+  function handleKeydown(event: KeyboardEvent) {
+    dispatch('keydown', event);
+  }
+
   $: inputClasses = cn(
     'w-full rounded-lg border px-4 py-2.5 text-sm',
     'bg-white dark:bg-gray-800',
@@ -89,6 +93,7 @@
     on:change={handleChange}
     on:blur={handleBlur}
     on:focus={handleFocus}
+    on:keydown={handleKeydown}
     aria-invalid={error ? 'true' : undefined}
     aria-describedby={error ? `${id}-error` : helpText ? `${id}-help` : undefined}
   />

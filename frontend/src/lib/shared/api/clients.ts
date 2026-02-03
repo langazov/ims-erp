@@ -64,25 +64,27 @@ export interface ClientListResponse {
 // API Functions
 import api from './index';
 
+const BASE_PATH = '/clients';
+
 export async function getClients(filter?: ClientFilter): Promise<ClientListResponse> {
   const params = filter as Record<string, string | number | boolean | undefined>;
-  return api.get('/clients', params);
+  return api.get(`${BASE_PATH}`, params);
 }
 
 export async function getClientById(id: string): Promise<Client> {
-  return api.get(`/clients/${id}`);
+  return api.get(`${BASE_PATH}/${id}`);
 }
 
 export async function createClient(data: CreateClientRequest): Promise<Client> {
-  return api.post('/clients', data);
+  return api.post(`${BASE_PATH}`, data);
 }
 
 export async function updateClient(id: string, data: UpdateClientRequest): Promise<Client> {
-  return api.patch(`/clients/${id}`, data);
+  return api.patch(`${BASE_PATH}/${id}`, data);
 }
 
 export async function deleteClient(id: string): Promise<void> {
-  return api.delete(`/clients/${id}`);
+  return api.delete(`${BASE_PATH}/${id}`);
 }
 
 export async function getClientCreditStatus(id: string): Promise<{
@@ -90,12 +92,12 @@ export async function getClientCreditStatus(id: string): Promise<{
   utilization: number;
   status: string;
 }> {
-  return api.get(`/clients/${id}/credit-status`);
+  return api.get(`${BASE_PATH}/${id}/credit-status`);
 }
 
 export async function assignCreditLimit(
   id: string,
   limit: number
 ): Promise<Client> {
-  return api.post(`/clients/${id}/credit-limit`, { limit });
+  return api.post(`${BASE_PATH}/${id}/credit-limit`, { limit });
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,46 @@ import (
 	"github.com/ims-erp/system/pkg/logger"
 	"github.com/ims-erp/system/pkg/tracer"
 )
+
+var allowedOrigins = []string{
+	"http://localhost:5173",
+	"http://localhost:5178",
+	"http://localhost:5174",
+	"http://localhost:5175",
+	"http://localhost:5176",
+	"http://localhost:5177",
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		isAllowed := false
+		for _, o := range allowedOrigins {
+			if origin == o {
+				isAllowed = true
+				break
+			}
+		}
+
+		if isAllowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 type OrderService struct {
 	config *config.Config
@@ -37,17 +78,40 @@ func (s *OrderService) setupRoutes() http.Handler {
 	mux.HandleFunc("/metrics", s.metricsHandler)
 
 	mux.HandleFunc("/api/v1/orders", s.handleOrders)
-	mux.HandleFunc("/api/v1/orders/", s.handleOrderByID)
-	mux.HandleFunc("/api/v1/orders/", s.handleOrderLines)
-	mux.HandleFunc("/api/v1/orders/", s.handleOrderPayments)
-	mux.HandleFunc("/api/v1/orders/", s.handleOrderFulfillment)
-	mux.HandleFunc("/api/v1/orders/", s.handleOrderShipment)
+	mux.HandleFunc("/api/v1/orders/", s.handleOrderRouter)
 	mux.HandleFunc("/api/v1/orders/status", s.handleUpdateStatus)
 	mux.HandleFunc("/api/v1/orders/search", s.handleSearch)
 	mux.HandleFunc("/api/v1/orders/report/summary", s.handleSummaryReport)
 	mux.HandleFunc("/api/v1/orders/report/fulfillment", s.handleFulfillmentReport)
 
 	return mux
+}
+
+func (s *OrderService) handleOrderRouter(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	idPattern := "/api/v1/orders/"
+	linesPattern := "/api/v1/orders//lines"
+	paymentsPattern := "/api/v1/orders//payments"
+	fulfillmentPattern := "/api/v1/orders//fulfillment"
+	shipmentPattern := "/api/v1/orders//shipment"
+
+	switch {
+	case strings.HasPrefix(path, linesPattern):
+		s.handleOrderLines(w, r)
+	case strings.HasPrefix(path, paymentsPattern):
+		s.handleOrderPayments(w, r)
+	case strings.HasPrefix(path, fulfillmentPattern):
+		s.handleOrderFulfillment(w, r)
+	case strings.HasPrefix(path, shipmentPattern):
+		s.handleOrderShipment(w, r)
+	case strings.HasPrefix(path, idPattern):
+		id := strings.TrimPrefix(path, idPattern)
+		id = strings.Split(id, "/")[0]
+		r.URL.Query().Set("orderId", id)
+		s.handleOrderByID(w, r)
+	default:
+		http.Error(w, "Not found", http.StatusNotFound)
+	}
 }
 
 func (s *OrderService) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -333,10 +397,11 @@ func main() {
 
 	service := NewOrderService(cfg, log)
 	mux := service.setupRoutes()
+	handler := corsMiddleware(mux)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.App.Port),
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  cfg.App.ReadTimeout,
 		WriteTimeout: cfg.App.WriteTimeout,
 	}

@@ -486,25 +486,33 @@ func NewRateLimiter(redis *Redis, log *logger.Logger) *RateLimiter {
 	}
 }
 
-func (r *RateLimiter) Allow(ctx context.Context, tenantID string, limit int, window time.Duration) (bool, int, error) {
+func (r *RateLimiter) Allow(ctx context.Context, identifier string, limit int, window time.Duration) (bool, int, error) {
 	ctx, span := r.tracer.Start(ctx, "redis.rate_limit",
 		trace.WithAttributes(
-			attribute.String("rate_limit.tenant_id", tenantID),
+			attribute.String("rate_limit.identifier", identifier),
 			attribute.Int("rate_limit.limit", limit),
 			attribute.String("rate_limit.window", window.String()),
 		),
 	)
 	defer span.End()
 
-	key := fmt.Sprintf("ratelimit:%s", tenantID)
+	key := fmt.Sprintf("ratelimit:%s", identifier)
 	now := time.Now().UnixNano()
 	windowStart := now - int64(window)
 
 	pipe := r.redis.client.Pipeline()
-	pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, window)
-	pipe.ZRemRangeByScore(ctx, key, "0", fmt.Sprintf("%d", windowStart))
+
+	pipe.ZAdd(ctx, key, redis.Z{
+		Score:  float64(now),
+		Member: fmt.Sprintf("%d", now),
+	})
+
+	pipe.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", windowStart))
+
 	count := pipe.ZCard(ctx, key)
+
+	pipe.Expire(ctx, key, window)
+
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		span.RecordError(err)

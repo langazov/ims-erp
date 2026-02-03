@@ -7,6 +7,7 @@ import (
 
 	"github.com/ims-erp/system/internal/config"
 	"github.com/ims-erp/system/pkg/logger"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -281,7 +282,7 @@ func (s *ReadModelStore) FindOne(ctx context.Context, filter interface{}) (inter
 	ctx, span := s.tracer.Start(ctx, "mongo.find_one_read_model")
 	defer span.End()
 
-	var result interface{}
+	var result bson.M
 	err := s.collection.FindOne(ctx, filter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -305,13 +306,18 @@ func (s *ReadModelStore) Find(ctx context.Context, filter interface{}, opts ...*
 	}
 	defer cursor.Close(ctx)
 
-	var results []interface{}
+	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to decode read models: %w", err)
 	}
 
-	return results, nil
+	resultsInterface := make([]interface{}, len(results))
+	for i, r := range results {
+		resultsInterface[i] = r
+	}
+
+	return resultsInterface, nil
 }
 
 func (s *ReadModelStore) Delete(ctx context.Context, filter interface{}) error {
