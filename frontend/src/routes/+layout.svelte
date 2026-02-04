@@ -7,6 +7,7 @@
   import { createCore, type Core, type PluginManifestEntry } from '$lib/core';
   import type { LayoutData } from './$types';
   import Sidebar from '$lib/shared/components/layout/Sidebar.svelte';
+  import GlobalSearch from '$lib/shared/components/search/GlobalSearch.svelte';
   import { auth } from '$lib/shared/stores/auth';
   import '../app.css';
   
@@ -19,6 +20,7 @@
   
   let sidebarCollapsed = false;
   let authInitialized = false;
+  let showGlobalSearch = false;
   
   $: path = String($page.url.pathname);
   $: isAuthPage = path === '/login' || path.startsWith('/login/') || 
@@ -85,7 +87,18 @@
       await core.destroy();
     }
   });
+
+  // Global keyboard shortcut for search
+  function handleKeydown(event: KeyboardEvent) {
+    // Cmd/Ctrl + K to open search
+    if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+      event.preventDefault();
+      showGlobalSearch = true;
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <svelte:head>
   <title>SvelteKit Plugin System</title>
@@ -108,9 +121,23 @@
   <div class="app-layout">
     <Sidebar bind:collapsed={sidebarCollapsed} pluginManifests={data.pluginManifests} />
     <main class="main-content" class:sidebar-collapsed={sidebarCollapsed}>
+      <!-- Search Trigger Button -->
+      <button 
+        class="fixed bottom-6 right-6 z-40 w-14 h-14 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+        onclick={() => showGlobalSearch = true}
+        title="Search (Ctrl+K)"
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </button>
+      
       <slot />
     </main>
   </div>
+  
+  <!-- Global Search Modal -->
+  <GlobalSearch bind:isOpen={showGlobalSearch} />
 {:else if authInitialized}
   <div class="loading-container">
     <div class="loading-content">
