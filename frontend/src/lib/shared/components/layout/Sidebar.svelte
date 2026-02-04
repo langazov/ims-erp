@@ -4,6 +4,8 @@
   import { getContext, onMount, onDestroy } from 'svelte';
   import { type Writable } from 'svelte/store';
   import type { Core, PluginInstance, PluginManifestEntry } from '$lib/core';
+  import UserProfileDropdown from './UserProfileDropdown.svelte';
+  import NotificationCenter from './NotificationCenter.svelte';
 
   export let collapsed = false;
   export let pluginManifests: PluginManifestEntry[] = [];
@@ -232,6 +234,14 @@
   </nav>
 
   <div class="sidebar-footer">
+    <div class="footer-sections">
+      <!-- Notification Center -->
+      <NotificationCenter {collapsed} />
+      
+      <!-- User Profile Dropdown -->
+      <UserProfileDropdown {collapsed} />
+    </div>
+
     <button
       class="collapse-button"
       on:click={() => collapsed = !collapsed}
@@ -380,6 +390,15 @@
   .sidebar-footer {
     padding: 1rem;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .footer-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .collapse-button {

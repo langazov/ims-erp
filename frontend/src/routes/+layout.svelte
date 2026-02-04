@@ -8,6 +8,10 @@
   import type { LayoutData } from './$types';
   import Sidebar from '$lib/shared/components/layout/Sidebar.svelte';
   import GlobalSearch from '$lib/shared/components/search/GlobalSearch.svelte';
+  import ToastContainer from '$lib/shared/components/layout/ToastContainer.svelte';
+  import QuickCreateMenu from '$lib/shared/components/layout/QuickCreateMenu.svelte';
+  import Breadcrumb from '$lib/shared/components/layout/Breadcrumb.svelte';
+  import HelpButton from '$lib/shared/components/layout/HelpButton.svelte';
   import { auth } from '$lib/shared/stores/auth';
   import '../app.css';
   
@@ -121,23 +125,25 @@
   <div class="app-layout">
     <Sidebar bind:collapsed={sidebarCollapsed} pluginManifests={data.pluginManifests} />
     <main class="main-content" class:sidebar-collapsed={sidebarCollapsed}>
-      <!-- Search Trigger Button -->
-      <button 
-        class="fixed bottom-6 right-6 z-40 w-14 h-14 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
-        onclick={() => showGlobalSearch = true}
-        title="Search (Ctrl+K)"
-      >
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-      </button>
+      <!-- Breadcrumb Navigation -->
+      <Breadcrumb />
       
-      <slot />
+      <!-- Page Content -->
+      <div class="page-content">
+        <slot />
+      </div>
     </main>
   </div>
   
-  <!-- Global Search Modal -->
+  <!-- Global UI Elements -->
   <GlobalSearch bind:isOpen={showGlobalSearch} />
+  <ToastContainer position="top-right" />
+  <QuickCreateMenu />
+  
+  <!-- Help Button (Fixed) -->
+  <div class="fixed bottom-6 right-6 z-40">
+    <HelpButton />
+  </div>
 {:else if authInitialized}
   <div class="loading-container">
     <div class="loading-content">
@@ -182,6 +188,11 @@
   
   .main-content.sidebar-collapsed {
     margin-left: 72px;
+  }
+
+  .page-content {
+    padding: 0;
+    min-height: calc(100vh - 60px); /* Account for breadcrumb */
   }
   
   .loading-container,

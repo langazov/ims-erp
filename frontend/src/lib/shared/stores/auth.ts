@@ -142,5 +142,14 @@ function createAuthStore() {
   };
 }
 
+// Create the auth store instance
+const auth = createAuthStore();
+
+// Derived stores for convenience
+const isAuthenticated = derived(auth, ($auth) => $auth.isAuthenticated);
+const currentUser = derived(auth, ($auth) => $auth.user);
+const authTokens = derived(auth, ($auth) => $auth.tokens);
+const authLoading = derived(auth, ($auth) => $auth.isLoading);
+
 export { auth, isAuthenticated, currentUser, authTokens, authLoading };
 export type { User, TokenPair, AuthState } from '../api/auth';

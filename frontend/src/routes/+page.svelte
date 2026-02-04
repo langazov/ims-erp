@@ -4,9 +4,11 @@
   import type { Core, PluginRoutes } from '$lib/core';
   import Card from '$lib/shared/components/layout/Card.svelte';
   import Badge from '$lib/shared/components/display/Badge.svelte';
+  import ChartWidgets from '$lib/shared/components/dashboard/ChartWidgets.svelte';
   import { getOrderStats, type Order } from '$lib/shared/api/orders';
   import { getInventoryStats, type InventoryItem } from '$lib/shared/api/inventory';
   import { getUsers, type User } from '$lib/shared/api/users';
+  import { toast } from '$lib/shared/stores/toast';
 
   interface PluginWithRoutes {
     manifest: {
@@ -243,6 +245,11 @@
       {/each}
     </div>
   </Card>
+
+  <!-- Chart Widgets Section -->
+  <div class="charts-section">
+    <ChartWidgets />
+  </div>
 </div>
 
 <style>
@@ -456,5 +463,9 @@
     .content-grid {
       grid-template-columns: 1fr;
     }
+  }
+
+  .charts-section {
+    margin-top: 1.5rem;
   }
 </style>
