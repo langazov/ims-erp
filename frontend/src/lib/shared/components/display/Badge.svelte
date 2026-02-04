@@ -1,7 +1,7 @@
 <script lang="ts">
   import { cn } from '$lib/shared/utils/helpers';
 
-  export let variant: 'gray' | 'green' | 'yellow' | 'red' | 'blue' | 'purple' = 'gray';
+  export let variant: 'gray' | 'green' | 'yellow' | 'red' | 'blue' | 'purple' | 'orange' = 'gray';
   export let size: 'sm' | 'md' = 'md';
   export let dot = false;
 </script>
@@ -20,6 +20,8 @@
       'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-400',
     variant === 'purple' &&
       'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-400',
+    variant === 'orange' &&
+      'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-400',
     size === 'sm' && 'px-2 py-0.5 text-xs',
     size === 'md' && 'px-2.5 py-1 text-sm'
   )}
@@ -33,7 +35,8 @@
         variant === 'yellow' && 'bg-yellow-500',
         variant === 'red' && 'bg-red-500',
         variant === 'blue' && 'bg-blue-500',
-        variant === 'purple' && 'bg-purple-500'
+        variant === 'purple' && 'bg-purple-500',
+        variant === 'orange' && 'bg-orange-500'
       )}
     ></span>
   {/if}
