@@ -170,10 +170,5 @@
       display: none;
     }
 
-    .breadcrumb-item.ellipsis::before {
-      content: '...';
-      color: #9ca3af;
-      margin-right: 0.25rem;
-    }
   }
 </style>

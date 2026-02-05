@@ -1,0 +1,31 @@
+app:
+  name: "inventory-service"
+  port: 8084
+  environment: "development"
+  shutdown_timeout: 30s
+  read_timeout: 30s
+  write_timeout: 30s
+
+mongodb:
+  uri: "mongodb://mongodb:27017"
+  database: "erp_system"
+
+redis:
+  mode: "standalone"
+  addresses:
+    - "redis:6379"
+
+nats:
+  urls:
+    - "nats:4222"
+  jetstream:
+    enabled: true
+    stream_prefix: ""
+
+tracing:
+  enabled: false
+  exporter_type: "stdout"
+
+logging:
+  level: "debug"
+  format: "console"

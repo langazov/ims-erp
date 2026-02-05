@@ -4,6 +4,22 @@ A complete local development environment for the ERP System microservices archit
 
 ## Quick Start
 
+### Option A: Full Docker Compose Dev Stack (Backend + Frontend)
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+This starts MongoDB, Redis, NATS, backend services, API Gateway, and frontend.
+
+To stop:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+### Option B: Infrastructure + Local Services
+
 ### 1. Start Infrastructure (MongoDB, Redis, NATS)
 
 ```bash
@@ -14,7 +30,7 @@ docker-compose -f docker-compose.integration.yml up -d
 
 ```bash
 # Using the dev script (recommended)
-./scripts/dev.sh start
+./scripts/dev.sh start backend
 
 # Or manually start each service:
 cd cmd/auth-service && go run main.go &
@@ -61,13 +77,17 @@ go run scripts/seed-admin.go -mongodb "mongodb://localhost:27017" -database erp_
 ## Available Commands
 
 ```bash
-./scripts/dev.sh start     # Start all services
-./scripts/dev.sh stop      # Stop all services
-./scripts/dev.sh restart   # Restart all services
-./scripts/dev.sh status    # Check service status
-./scripts/dev.sh check     # Check infrastructure + status
-./scripts/dev.sh logs      # View API Gateway logs
-./scripts/dev.sh logs order-service  # View specific service logs
+./scripts/dev.sh start                 # Start full environment (infra + backend + frontend)
+./scripts/dev.sh stop                  # Stop full environment
+./scripts/dev.sh restart               # Restart full environment
+./scripts/dev.sh start infra           # Start infrastructure only
+./scripts/dev.sh start backend         # Start all backend services
+./scripts/dev.sh start frontend        # Start frontend only
+./scripts/dev.sh start api-gateway     # Start a single backend service
+./scripts/dev.sh stop order-service    # Stop a single backend service
+./scripts/dev.sh status backend        # Check backend status
+./scripts/dev.sh logs frontend         # View frontend logs
+./scripts/dev.sh logs order-service    # View service logs
 ```
 
 ## Service Ports

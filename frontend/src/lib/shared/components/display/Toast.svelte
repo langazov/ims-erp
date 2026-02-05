@@ -104,7 +104,7 @@
       <div
         class="h-full bg-current opacity-30"
         style="animation: shrink {duration}ms linear forwards"
-      />
+      ></div>
     </div>
   {/if}
 </div>

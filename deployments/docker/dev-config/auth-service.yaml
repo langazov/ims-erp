@@ -1,0 +1,40 @@
+app:
+  name: "auth-service"
+  port: 8081
+  environment: "development"
+  shutdown_timeout: 30s
+  read_timeout: 30s
+  write_timeout: 30s
+
+mongodb:
+  uri: "mongodb://mongodb:27017"
+  database: "erp_system"
+
+redis:
+  mode: "standalone"
+  addresses:
+    - "redis:6379"
+
+nats:
+  urls:
+    - "nats:4222"
+  jetstream:
+    enabled: false
+    stream_prefix: ""
+
+auth:
+  jwt_secret: "dev-secret-key-change-in-production"
+  jwt_issuer: "erp-system"
+  access_token_expiry: 1h
+  refresh_token_expiry: 168h
+  password_min_length: 8
+  max_login_attempts: 5
+  lockout_duration: 15m
+
+tracing:
+  enabled: false
+  exporter_type: "stdout"
+
+logging:
+  level: "debug"
+  format: "console"

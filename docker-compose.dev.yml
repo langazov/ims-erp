@@ -1,0 +1,185 @@
+x-go-service: &go-service
+  image: golang:1.25
+  restart: unless-stopped
+  volumes:
+    - ./:/workspace
+    - go-mod-cache:/go/pkg/mod
+    - go-build-cache:/root/.cache/go-build
+  environment:
+    GO111MODULE: "on"
+    CGO_ENABLED: "0"
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    nats:
+      condition: service_started
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: erp-dev-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: erp_system
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: erp-dev-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: erp-dev-nats
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command:
+      - "-js"
+      - "-m"
+      - "8222"
+
+  auth-service:
+    <<: *go-service
+    container_name: erp-dev-auth-service
+    working_dir: /workspace/cmd/auth-service
+    command: go run main.go
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/auth-service.yaml:/workspace/cmd/auth-service/auth-service.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  client-query-service:
+    <<: *go-service
+    container_name: erp-dev-client-query-service
+    working_dir: /workspace/cmd/client-query-service
+    command: go run main.go
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/client-query-service.yaml:/workspace/cmd/client-query-service/client-query-service.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  inventory-service:
+    <<: *go-service
+    container_name: erp-dev-inventory-service
+    working_dir: /workspace/cmd/inventory-service
+    command: go run main.go
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/inventory-service.yaml:/workspace/cmd/inventory-service/inventory-service.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  product-service:
+    <<: *go-service
+    container_name: erp-dev-product-service
+    working_dir: /workspace/cmd/product-service
+    command: go run main.go
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/product-service.yaml:/workspace/cmd/product-service/product-service.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  order-service:
+    <<: *go-service
+    container_name: erp-dev-order-service
+    working_dir: /workspace/cmd/order-service
+    command: go run main.go
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/order-service.yaml:/workspace/cmd/order-service/order-service.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  api-gateway:
+    <<: *go-service
+    container_name: erp-dev-api-gateway
+    working_dir: /workspace/cmd/api-gateway
+    command: go run main.go
+    ports:
+      - "8080:8080"
+    environment:
+      GO111MODULE: "on"
+      CGO_ENABLED: "0"
+      ERP_GATEWAY_AUTH_URL: "http://auth-service:8081"
+      ERP_GATEWAY_CLIENTS_URL: "http://client-query-service:8082"
+      ERP_GATEWAY_INVENTORY_URL: "http://inventory-service:8084"
+      ERP_GATEWAY_PAYMENTS_URL: "http://inventory-service:8084"
+      ERP_GATEWAY_PRODUCTS_URL: "http://product-service:8085"
+      ERP_GATEWAY_ORDERS_URL: "http://order-service:8086"
+      ERP_GATEWAY_USERS_URL: "http://auth-service:8081"
+    depends_on:
+      auth-service:
+        condition: service_started
+      client-query-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+    volumes:
+      - ./:/workspace
+      - ./deployments/docker/dev-config/api-gateway.yaml:/workspace/cmd/api-gateway/api-gateway.yaml:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  frontend:
+    image: node:22-alpine
+    container_name: erp-dev-frontend
+    restart: unless-stopped
+    working_dir: /workspace/frontend
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_URL: "http://localhost:8080/api/v1"
+      VITE_AUTH_ENABLED: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    depends_on:
+      api-gateway:
+        condition: service_started
+    volumes:
+      - ./:/workspace
+      - frontend-node-modules:/workspace/frontend/node_modules
+
+volumes:
+  mongodb_data:
+  redis_data:
+  go-mod-cache:
+  go-build-cache:
+  frontend-node-modules:

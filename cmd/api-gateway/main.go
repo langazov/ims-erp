@@ -29,6 +29,7 @@ type APIGateway struct {
 	config   *config.Config
 	logger   *logger.Logger
 	services map[string]ServiceConfig
+	routes   map[string]string
 }
 
 func NewAPIGateway(cfg *config.Config, log *logger.Logger) *APIGateway {
@@ -36,7 +37,32 @@ func NewAPIGateway(cfg *config.Config, log *logger.Logger) *APIGateway {
 		config:   cfg,
 		logger:   log,
 		services: make(map[string]ServiceConfig),
+		routes: map[string]string{
+			"auth":      "http://localhost:8081",
+			"clients":   "http://localhost:8082",
+			"invoices":  "http://localhost:8083",
+			"payments":  "http://localhost:8084",
+			"products":  "http://localhost:8085",
+			"orders":    "http://localhost:8086",
+			"users":     "http://localhost:8081",
+			"inventory": "http://localhost:8084",
+		},
 	}
+}
+
+func (g *APIGateway) SetRouteTarget(route, target string) {
+	if strings.TrimSpace(target) == "" {
+		return
+	}
+	g.routes[route] = target
+}
+
+func (g *APIGateway) routeTarget(route string) string {
+	target, ok := g.routes[route]
+	if !ok {
+		return ""
+	}
+	return target
 }
 
 func (g *APIGateway) AddService(name string, svcURL string, paths map[string]string, methods map[string]string) {
@@ -136,47 +162,48 @@ func (g *APIGateway) checkServices() map[string]string {
 
 func (g *APIGateway) authHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/auth")
+	target := g.routeTarget("auth")
 
 	switch {
 	case strings.HasPrefix(path, "/register"):
-		g.proxyRequest(w, r, "http://localhost:8081")
+		g.proxyRequest(w, r, target)
 	case strings.HasPrefix(path, "/login"):
-		g.proxyRequest(w, r, "http://localhost:8081")
+		g.proxyRequest(w, r, target)
 	case strings.HasPrefix(path, "/refresh"):
-		g.proxyRequest(w, r, "http://localhost:8081")
+		g.proxyRequest(w, r, target)
 	case strings.HasPrefix(path, "/me"):
-		g.proxyRequest(w, r, "http://localhost:8081")
+		g.proxyRequest(w, r, target)
 	default:
-		g.proxyRequest(w, r, "http://localhost:8081")
+		g.proxyRequest(w, r, target)
 	}
 }
 
 func (g *APIGateway) clientsHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8082")
+	g.proxyRequest(w, r, g.routeTarget("clients"))
 }
 
 func (g *APIGateway) invoicesHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8083")
+	g.proxyRequest(w, r, g.routeTarget("invoices"))
 }
 
 func (g *APIGateway) paymentsHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8084")
+	g.proxyRequest(w, r, g.routeTarget("payments"))
 }
 
 func (g *APIGateway) productsHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8085")
+	g.proxyRequest(w, r, g.routeTarget("products"))
 }
 
 func (g *APIGateway) ordersHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8086")
+	g.proxyRequest(w, r, g.routeTarget("orders"))
 }
 
 func (g *APIGateway) usersHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8081")
+	g.proxyRequest(w, r, g.routeTarget("users"))
 }
 
 func (g *APIGateway) inventoryHandler(w http.ResponseWriter, r *http.Request) {
-	g.proxyRequest(w, r, "http://localhost:8084")
+	g.proxyRequest(w, r, g.routeTarget("inventory"))
 }
 
 func (g *APIGateway) proxyRequest(w http.ResponseWriter, r *http.Request, target string) {
@@ -283,6 +310,14 @@ func main() {
 	defer tr.Shutdown(context.Background())
 
 	gateway := NewAPIGateway(cfg, log)
+	gateway.SetRouteTarget("auth", envOrDefault("ERP_GATEWAY_AUTH_URL", "http://localhost:8081"))
+	gateway.SetRouteTarget("clients", envOrDefault("ERP_GATEWAY_CLIENTS_URL", "http://localhost:8082"))
+	gateway.SetRouteTarget("invoices", envOrDefault("ERP_GATEWAY_INVOICES_URL", "http://localhost:8083"))
+	gateway.SetRouteTarget("payments", envOrDefault("ERP_GATEWAY_PAYMENTS_URL", "http://localhost:8084"))
+	gateway.SetRouteTarget("products", envOrDefault("ERP_GATEWAY_PRODUCTS_URL", "http://localhost:8085"))
+	gateway.SetRouteTarget("orders", envOrDefault("ERP_GATEWAY_ORDERS_URL", "http://localhost:8086"))
+	gateway.SetRouteTarget("users", envOrDefault("ERP_GATEWAY_USERS_URL", "http://localhost:8081"))
+	gateway.SetRouteTarget("inventory", envOrDefault("ERP_GATEWAY_INVENTORY_URL", "http://localhost:8084"))
 
 	mux := gateway.buildRouter()
 	mux = gateway.corsMiddleware(mux)
@@ -321,4 +356,12 @@ func main() {
 
 func generateRequestID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func envOrDefault(key, defaultValue string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }

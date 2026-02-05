@@ -118,10 +118,12 @@
     transition:fade={{ duration: 200 }}
   >
     <!-- Backdrop -->
-    <div 
+    <button
+      type="button"
       class="absolute inset-0 bg-black/50 backdrop-blur-sm"
       on:click={close}
-    />
+      aria-label="Close global search"
+    ></button>
 
     <!-- Search Modal -->
     <div
@@ -155,6 +157,7 @@
           <button
             class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
             on:click={() => { searchQuery = ''; results = []; inputRef.focus(); }}
+            aria-label="Clear search"
           >
             <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
