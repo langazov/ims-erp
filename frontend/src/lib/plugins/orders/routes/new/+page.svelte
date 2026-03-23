@@ -84,7 +84,6 @@
         const qty = parseFloat(item.quantityStr);
         const price = parseFloat(item.unitPriceStr);
         return {
-          productId: '',
           productName: item.productName.trim(),
           quantity: qty,
           unitPrice: price.toFixed(2),

@@ -118,6 +118,8 @@
     }
   }
 
+  // TODO: Implement export functionality (CSV/Excel) including payment number,
+  // client, amount, method, status, and date columns for the reconciliation period.
   function handleExport() {
     toast.info('Export feature coming soon');
   }
