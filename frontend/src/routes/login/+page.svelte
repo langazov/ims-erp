@@ -19,13 +19,18 @@
 
     const tenantToUse = tenantId || DEMO_TENANT_ID;
 
-    if (result.success) {
-      goto('/');
-    } else {
-      error = result.error || 'Login failed. Please try again.';
+    try {
+      const result = await auth.login(tenantToUse, email, password);
+      if (result.success) {
+        goto('/');
+      } else {
+        error = result.error || 'Login failed. Please try again.';
+      }
+    } catch {
+      error = 'An unexpected error occurred. Please try again.';
+    } finally {
+      loading = false;
     }
-
-    loading = false;
   }
 
   function handleKeydown(event: KeyboardEvent) {

@@ -10,25 +10,8 @@
   import Alert from '$lib/shared/components/display/Alert.svelte';
   import Modal from '$lib/shared/components/layout/Modal.svelte';
   import Pagination from '$lib/shared/components/data/Pagination.svelte';
-
-  interface Warehouse {
-    id: string;
-    code: string;
-    name: string;
-    type: 'main' | 'distribution' | 'retail' | 'virtual';
-    status: 'active' | 'inactive';
-    address: {
-      street: string;
-      city: string;
-      state: string;
-      postalCode: string;
-      country: string;
-    };
-    capacity: number;
-    utilizedCapacity: number;
-    locationCount: number;
-    createdAt: string;
-  }
+  import { getWarehouses, deleteWarehouse } from '$lib/shared/api/warehouse';
+  import type { Warehouse, WarehouseType, WarehouseStatus } from '$lib/shared/api/warehouse';
 
   let warehouses: Warehouse[] = [];
   let loading = true;
@@ -93,53 +76,18 @@
   async function loadWarehouses() {
     loading = true;
     error = null;
-    
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Mock data
-      warehouses = [
-        {
-          id: '1',
-          code: 'WH001',
-          name: 'Main Distribution Center',
-          type: 'main',
-          status: 'active',
-          address: { street: '123 Main St', city: 'New York', state: 'NY', postalCode: '10001', country: 'USA' },
-          capacity: 10000,
-          utilizedCapacity: 7500,
-          locationCount: 150,
-          createdAt: '2024-01-15'
-        },
-        {
-          id: '2',
-          code: 'WH002',
-          name: 'West Coast Hub',
-          type: 'distribution',
-          status: 'active',
-          address: { street: '456 West Ave', city: 'Los Angeles', state: 'CA', postalCode: '90001', country: 'USA' },
-          capacity: 8000,
-          utilizedCapacity: 6200,
-          locationCount: 120,
-          createdAt: '2024-02-20'
-        },
-        {
-          id: '3',
-          code: 'WH003',
-          name: 'Retail Store - Downtown',
-          type: 'retail',
-          status: 'active',
-          address: { street: '789 Shop St', city: 'Chicago', state: 'IL', postalCode: '60601', country: 'USA' },
-          capacity: 500,
-          utilizedCapacity: 350,
-          locationCount: 25,
-          createdAt: '2024-03-10'
-        }
-      ];
-      
-      totalItems = warehouses.length;
-      totalPages = Math.ceil(totalItems / pageSize);
+      const filter: Record<string, string | number | undefined> = {
+        page: currentPage,
+        pageSize,
+      };
+      if (searchQuery) filter.search = searchQuery;
+      if (statusFilter) filter.status = statusFilter;
+      if (typeFilter) filter.type = typeFilter;
+      const response = await getWarehouses(filter as Parameters<typeof getWarehouses>[0]);
+      warehouses = response.data;
+      totalItems = response.total;
+      totalPages = response.totalPages;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load warehouses';
     } finally {
@@ -168,13 +116,10 @@
 
   async function confirmDelete() {
     if (!deleteWarehouseId) return;
-    
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 300));
-      warehouses = warehouses.filter(w => w.id !== deleteWarehouseId);
-      totalItems = warehouses.length;
+      await deleteWarehouse(deleteWarehouseId);
       deleteWarehouseId = null;
+      await loadWarehouses();
     } catch (err) {
       error = 'Failed to delete warehouse';
     }

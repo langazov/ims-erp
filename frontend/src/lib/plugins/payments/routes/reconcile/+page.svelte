@@ -1,1249 +1,396 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import Button from '$lib/shared/components/forms/Button.svelte';
-  import Input from '$lib/shared/components/forms/Input.svelte';
-  import Select from '$lib/shared/components/forms/Select.svelte';
-  import DatePicker from '$lib/shared/components/forms/DatePicker.svelte';
-  import FileUpload from '$lib/shared/components/forms/FileUpload.svelte';
   import Card from '$lib/shared/components/layout/Card.svelte';
-  import Table from '$lib/shared/components/data/Table.svelte';
   import Badge from '$lib/shared/components/display/Badge.svelte';
   import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
-  import Modal from '$lib/shared/components/layout/Modal.svelte';
-  import Chip from '$lib/shared/components/display/Chip.svelte';
+  import Button from '$lib/shared/components/forms/Button.svelte';
+  import EmptyState from '$lib/shared/components/display/EmptyState.svelte';
+  import { getPayments, type Payment, type PaymentStatus, type PaymentMethod } from '$lib/shared/api/payments';
+  import { toast } from '$lib/shared/stores/toast';
 
-  interface BankTransaction {
-    id: string;
+  interface DateGroup {
     date: string;
-    description: string;
-    amount: string;
-    reference?: string;
-    status: 'unmatched' | 'matched' | 'disputed';
-    matchedPaymentId?: string;
-  }
-
-  interface SystemPayment {
-    id: string;
-    paymentNumber: string;
-    clientName: string;
-    invoiceNumber: string;
-    amount: string;
-    method: string;
-    paidAt: string;
-    status: 'pending' | 'completed' | 'failed' | 'refunded';
-    matchedTransactionId?: string;
-  }
-
-  interface MatchSuggestion {
-    transactionId: string;
-    paymentId: string;
-    confidence: number;
-    reason: string;
+    payments: Payment[];
+    total: number;
+    reconciled: number;
+    unreconciled: number;
   }
 
   let loading = true;
   let error: string | null = null;
-  let processing = false;
-  
-  // Date range
-  let dateFrom = '';
-  let dateTo = '';
-  
-  // Filters
-  let statusFilter: 'all' | 'matched' | 'unmatched' | 'disputed' = 'all';
-  
-  // Data
-  let bankTransactions: BankTransaction[] = [];
-  let systemPayments: SystemPayment[] = [];
-  let matchSuggestions: MatchSuggestion[] = [];
-  
-  // Selection
-  let selectedTransactionId: string | null = null;
-  let selectedPaymentId: string | null = null;
-  
-  // Modals
-  let showConfirmModal = false;
-  let showExportModal = false;
-  let showMatchModal = false;
-  let confirmAction: 'match' | 'unmatch' | 'reconcile' | null = null;
-  
-  // Statistics
-  $: stats = calculateStats(bankTransactions, systemPayments);
-  
-  // Filtered data
-  $: filteredTransactions = filterTransactions(bankTransactions, statusFilter);
-  $: unmatchedPayments = systemPayments.filter(p => !p.matchedTransactionId && p.status === 'completed');
+  let dateGroups: DateGroup[] = [];
+  let totalReconciled = 0;
+  let totalUnreconciled = 0;
+  let reconciledCount = 0;
+  let unreconciledCount = 0;
 
-  const statusOptions = [
-    { value: 'all', label: 'All Items' },
-    { value: 'matched', label: 'Matched' },
-    { value: 'unmatched', label: 'Unmatched' },
-    { value: 'disputed', label: 'Disputed' }
-  ];
+  function formatCurrency(amount: string | number): string {
+    const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+    if (isNaN(num)) return String(amount);
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+  }
 
-  function calculateStats(transactions: BankTransaction[], payments: SystemPayment[]) {
-    const totalTransactions = transactions.length;
-    const matchedCount = transactions.filter(t => t.status === 'matched').length;
-    const unmatchedCount = transactions.filter(t => t.status === 'unmatched').length;
-    const disputedCount = transactions.filter(t => t.status === 'disputed').length;
-    
-    const totalBankAmount = transactions.reduce((sum, t) => sum + parseFloat(t.amount), 0);
-    const matchedAmount = transactions
-      .filter(t => t.status === 'matched')
-      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-    
-    const totalPayments = payments.filter(p => p.status === 'completed').length;
-    const matchedPayments = payments.filter(p => p.matchedTransactionId).length;
-    
-    return {
-      totalTransactions,
-      matchedCount,
-      unmatchedCount,
-      disputedCount,
-      totalBankAmount,
-      matchedAmount,
-      totalPayments,
-      matchedPayments
+  function toDateKey(dateStr: string): string {
+    return new Date(dateStr).toISOString().split('T')[0];
+  }
+
+  function formatDateHeader(key: string): string {
+    const date = new Date(key + 'T12:00:00');
+    return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  function getStatusVariant(status: PaymentStatus): 'green' | 'yellow' | 'red' | 'gray' | 'blue' {
+    switch (status) {
+      case 'completed': return 'green';
+      case 'pending': return 'yellow';
+      case 'processing': return 'blue';
+      case 'failed': return 'red';
+      case 'refunded': return 'gray';
+      case 'cancelled': return 'gray';
+      default: return 'gray';
+    }
+  }
+
+  function formatMethodLabel(method: PaymentMethod): string {
+    const labels: Record<PaymentMethod, string> = {
+      card: 'Card',
+      bank_transfer: 'Bank Transfer',
+      cash: 'Cash',
+      check: 'Check',
+      stripe: 'Stripe',
+      paypal: 'PayPal'
     };
+    return labels[method] ?? method;
   }
 
-  function filterTransactions(transactions: BankTransaction[], filter: string): BankTransaction[] {
-    if (filter === 'all') return transactions;
-    return transactions.filter(t => t.status === filter);
+  function groupByDate(payments: Payment[]): DateGroup[] {
+    const map = new Map<string, Payment[]>();
+    for (const p of payments) {
+      const key = toDateKey(p.paidAt ?? p.createdAt);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    }
+
+    const groups: DateGroup[] = [];
+    const sortedKeys = Array.from(map.keys()).sort((a, b) => b.localeCompare(a));
+    for (const date of sortedKeys) {
+      const list = map.get(date)!;
+      let reconciled = 0;
+      let unreconciled = 0;
+      for (const p of list) {
+        const amt = parseFloat(p.amount) || 0;
+        if (p.status === 'completed') reconciled += amt;
+        else unreconciled += amt;
+      }
+      groups.push({ date, payments: list, total: reconciled + unreconciled, reconciled, unreconciled });
+    }
+    return groups;
   }
 
-  async function loadData() {
+  async function loadPayments() {
     loading = true;
     error = null;
-    
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      // Mock bank transactions
-      bankTransactions = [
-        {
-          id: 'txn-001',
-          date: '2024-01-15',
-          description: 'ACME CORP - WIRE TRANSFER',
-          amount: '5400.00',
-          reference: 'WIRE-789456',
-          status: 'matched',
-          matchedPaymentId: 'pay-001'
-        },
-        {
-          id: 'txn-002',
-          date: '2024-01-16',
-          description: 'TECHSTART INC - ACH PAYMENT',
-          amount: '3780.00',
-          reference: 'ACH-123456',
-          status: 'matched',
-          matchedPaymentId: 'pay-002'
-        },
-        {
-          id: 'txn-003',
-          date: '2024-01-17',
-          description: 'GLOBAL SOLUTIONS LLC',
-          amount: '2000.00',
-          reference: 'CHK-4521',
-          status: 'unmatched'
-        },
-        {
-          id: 'txn-004',
-          date: '2024-01-18',
-          description: 'DIGITAL VENTURES CO',
-          amount: '2500.00',
-          reference: 'PAYPAL-789',
-          status: 'disputed'
-        },
-        {
-          id: 'txn-005',
-          date: '2024-01-19',
-          description: 'UNKNOWN MERCHANT',
-          amount: '1500.00',
-          status: 'unmatched'
-        },
-        {
-          id: 'txn-006',
-          date: '2024-01-20',
-          description: 'ACME CORP - WIRE TRANSFER',
-          amount: '3200.00',
-          reference: 'WIRE-789457',
-          status: 'unmatched'
+      const response = await getPayments({ pageSize: 500, page: 1 });
+      const all = response.data;
+      dateGroups = groupByDate(all);
+
+      totalReconciled = 0;
+      totalUnreconciled = 0;
+      reconciledCount = 0;
+      unreconciledCount = 0;
+
+      for (const p of all) {
+        const amt = parseFloat(p.amount) || 0;
+        if (p.status === 'completed') {
+          totalReconciled += amt;
+          reconciledCount++;
+        } else {
+          totalUnreconciled += amt;
+          unreconciledCount++;
         }
-      ];
-      
-      // Mock system payments
-      systemPayments = [
-        {
-          id: 'pay-001',
-          paymentNumber: 'PAY-2024-001',
-          clientName: 'Acme Corporation',
-          invoiceNumber: 'INV-2024-001',
-          amount: '5400.00',
-          method: 'bank_transfer',
-          paidAt: '2024-01-15T10:30:00Z',
-          status: 'completed',
-          matchedTransactionId: 'txn-001'
-        },
-        {
-          id: 'pay-002',
-          paymentNumber: 'PAY-2024-002',
-          clientName: 'TechStart Inc',
-          invoiceNumber: 'INV-2024-002',
-          amount: '3780.00',
-          method: 'credit_card',
-          paidAt: '2024-01-16T14:20:00Z',
-          status: 'completed',
-          matchedTransactionId: 'txn-002'
-        },
-        {
-          id: 'pay-003',
-          paymentNumber: 'PAY-2024-003',
-          clientName: 'Global Solutions LLC',
-          invoiceNumber: 'INV-2024-003',
-          amount: '2000.00',
-          method: 'check',
-          paidAt: '2024-01-17T09:00:00Z',
-          status: 'completed'
-        },
-        {
-          id: 'pay-004',
-          paymentNumber: 'PAY-2024-004',
-          clientName: 'Digital Ventures Co',
-          invoiceNumber: 'INV-2024-004',
-          amount: '2500.00',
-          method: 'paypal',
-          paidAt: '2024-01-18T11:30:00Z',
-          status: 'completed'
-        },
-        {
-          id: 'pay-005',
-          paymentNumber: 'PAY-2024-005',
-          clientName: 'Acme Corporation',
-          invoiceNumber: 'INV-2024-005',
-          amount: '3200.00',
-          method: 'bank_transfer',
-          paidAt: '2024-01-20T10:30:00Z',
-          status: 'completed'
-        }
-      ];
-      
-      // Mock match suggestions
-      matchSuggestions = [
-        { transactionId: 'txn-003', paymentId: 'pay-003', confidence: 95, reason: 'Exact amount match' },
-        { transactionId: 'txn-004', paymentId: 'pay-004', confidence: 90, reason: 'Amount and date match' },
-        { transactionId: 'txn-006', paymentId: 'pay-005', confidence: 88, reason: 'Amount and client match' }
-      ];
-      
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load reconciliation data';
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load payments';
     } finally {
       loading = false;
     }
   }
 
-  function getStatusVariant(status: string): 'green' | 'gray' | 'yellow' | 'red' | 'blue' {
-    switch (status) {
-      case 'matched':
-      case 'completed':
-        return 'green';
-      case 'unmatched':
-      case 'pending':
-        return 'yellow';
-      case 'disputed':
-      case 'failed':
-        return 'red';
-      case 'refunded':
-        return 'blue';
-      default:
-        return 'gray';
-    }
-  }
-
-  function formatCurrency(value: string): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(parseFloat(value) || 0);
-  }
-
-  function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  }
-
-  function handleFileSelect(event: CustomEvent<File>) {
-    // TODO: Process bank statement file
-    console.log('File selected:', event.detail);
-    // Simulate processing
-    setTimeout(() => {
-      alert('Bank statement uploaded successfully!');
-    }, 500);
-  }
-
-  function handleTransactionSelect(transaction: BankTransaction) {
-    if (selectedTransactionId === transaction.id) {
-      selectedTransactionId = null;
-    } else {
-      selectedTransactionId = transaction.id;
-      // Check for auto-match suggestion
-      const suggestion = matchSuggestions.find(s => s.transactionId === transaction.id);
-      if (suggestion && transaction.status === 'unmatched') {
-        selectedPaymentId = suggestion.paymentId;
-      }
-    }
-  }
-
-  function handlePaymentSelect(payment: SystemPayment) {
-    if (selectedPaymentId === payment.id) {
-      selectedPaymentId = null;
-    } else {
-      selectedPaymentId = payment.id;
-    }
-  }
-
-  function handleMatch() {
-    if (!selectedTransactionId || !selectedPaymentId) return;
-    confirmAction = 'match';
-    showConfirmModal = true;
-  }
-
-  function handleUnmatch(transaction: BankTransaction) {
-    selectedTransactionId = transaction.id;
-    confirmAction = 'unmatch';
-    showConfirmModal = true;
-  }
-
-  async function confirmMatchAction() {
-    processing = true;
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      if (confirmAction === 'match' && selectedTransactionId && selectedPaymentId) {
-        // Update transaction
-        bankTransactions = bankTransactions.map(t => 
-          t.id === selectedTransactionId 
-            ? { ...t, status: 'matched', matchedPaymentId: selectedPaymentId }
-            : t
-        );
-        
-        // Update payment
-        systemPayments = systemPayments.map(p => 
-          p.id === selectedPaymentId 
-            ? { ...p, matchedTransactionId: selectedTransactionId }
-            : p
-        );
-        
-        // Remove suggestion
-        matchSuggestions = matchSuggestions.filter(s => 
-          s.transactionId !== selectedTransactionId && s.paymentId !== selectedPaymentId
-        );
-        
-        selectedTransactionId = null;
-        selectedPaymentId = null;
-      } else if (confirmAction === 'unmatch' && selectedTransactionId) {
-        const transaction = bankTransactions.find(t => t.id === selectedTransactionId);
-        if (transaction?.matchedPaymentId) {
-          // Update transaction
-          bankTransactions = bankTransactions.map(t => 
-            t.id === selectedTransactionId 
-              ? { ...t, status: 'unmatched', matchedPaymentId: undefined }
-              : t
-          );
-          
-          // Update payment
-          systemPayments = systemPayments.map(p => 
-            p.id === transaction.matchedPaymentId 
-              ? { ...p, matchedTransactionId: undefined }
-              : p
-          );
-        }
-        selectedTransactionId = null;
-      }
-      
-      showConfirmModal = false;
-      confirmAction = null;
-    } catch (err) {
-      error = 'Failed to process match action';
-    } finally {
-      processing = false;
-    }
-  }
-
-  function handleMarkReconciled() {
-    confirmAction = 'reconcile';
-    showConfirmModal = true;
-  }
-
-  async function confirmReconcile() {
-    processing = true;
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      alert('Reconciliation completed successfully!');
-      showConfirmModal = false;
-      confirmAction = null;
-    } catch (err) {
-      error = 'Failed to complete reconciliation';
-    } finally {
-      processing = false;
-    }
-  }
-
+  // TODO: Implement export functionality (CSV/Excel) including payment number,
+  // client, amount, method, status, and date columns for the reconciliation period.
   function handleExport() {
-    const csvContent = [
-      ['Date', 'Description', 'Reference', 'Amount', 'Status', 'Matched Payment'].join(','),
-      ...bankTransactions.map(t => [
-        t.date,
-        `"${t.description}"`,
-        t.reference || '',
-        t.amount,
-        t.status,
-        t.matchedPaymentId || ''
-      ].join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `reconciliation-report-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    showExportModal = true;
-    setTimeout(() => showExportModal = false, 2000);
+    toast.info('Export feature coming soon');
   }
 
-  function getMatchSuggestion(transactionId: string): MatchSuggestion | undefined {
-    return matchSuggestions.find(s => s.transactionId === transactionId);
-  }
-
-  function canMatch(): boolean {
-    return !!selectedTransactionId && !!selectedPaymentId;
-  }
-
-  function applyDateRange() {
-    loadData();
-  }
-
-  onMount(() => {
-    // Set default date range (last 30 days)
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    dateTo = today.toISOString().split('T')[0];
-    dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
-    
-    loadData();
-  });
+  onMount(loadPayments);
 </script>
-
-<svelte:head>
-  <title>Payment Reconciliation | ERP System</title>
-</svelte:head>
 
 <div class="page-container">
   <div class="page-header">
-    <div class="header-content">
+    <div>
       <h1 class="page-title">Payment Reconciliation</h1>
-      <p class="page-description">Match bank transactions with system payments</p>
+      <p class="page-subtitle">Review and reconcile payments grouped by date</p>
     </div>
-    <div class="header-actions">
-      <Button variant="secondary" on:click={handleExport}>
-        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-        </svg>
-        Export Report
-      </Button>
-      <Button variant="primary" on:click={handleMarkReconciled} disabled={stats.unmatchedCount > 0}>
-        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        Mark Reconciled
-      </Button>
-    </div>
+    <Button variant="secondary" on:click={handleExport}>Export</Button>
   </div>
 
   {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => error = null} class="mb-4">
-      {error}
-    </Alert>
+    <Alert variant="error" dismissible on:dismiss={() => (error = null)}>{error}</Alert>
   {/if}
 
-  <!-- Date Range & Filters -->
-  <Card class="filters-card">
-    <div class="filters-row">
-      <div class="date-range">
-        <span class="filter-label">Period:</span>
-        <DatePicker
-          id="date-from"
-          label=""
-          bind:value={dateFrom}
-        />
-        <span class="date-separator">to</span>
-        <DatePicker
-          id="date-to"
-          label=""
-          bind:value={dateTo}
-        />
-        <Button variant="secondary" size="sm" on:click={applyDateRange}>
-          Apply
-        </Button>
+  {#if loading}
+    <div class="spinner-wrap">
+      <Spinner size="lg" />
+    </div>
+  {:else}
+    <!-- Summary -->
+    <div class="summary-bar">
+      <div class="summary-item">
+        <span class="summary-label">Reconciled</span>
+        <span class="summary-value reconciled">{formatCurrency(totalReconciled)}</span>
+        <span class="summary-count">{reconciledCount} payments</span>
       </div>
-      <div class="status-filter">
-        <Select
-          id="status-filter"
-          label="Filter by Status"
-          options={statusOptions}
-          bind:value={statusFilter}
-        />
+      <div class="summary-divider"></div>
+      <div class="summary-item">
+        <span class="summary-label">Unreconciled</span>
+        <span class="summary-value unreconciled">{formatCurrency(totalUnreconciled)}</span>
+        <span class="summary-count">{unreconciledCount} payments</span>
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-item">
+        <span class="summary-label">Total</span>
+        <span class="summary-value">{formatCurrency(totalReconciled + totalUnreconciled)}</span>
+        <span class="summary-count">{reconciledCount + unreconciledCount} payments</span>
       </div>
     </div>
-  </Card>
 
-  <!-- Statistics -->
-  <div class="stats-grid">
-    <Card class="stat-card">
-      <div class="stat-content">
-        <span class="stat-label">Total Transactions</span>
-        <span class="stat-value">{stats.totalTransactions}</span>
-        <span class="stat-amount">{formatCurrency(stats.totalBankAmount.toFixed(2))}</span>
-      </div>
-    </Card>
-    <Card class="stat-card">
-      <div class="stat-content">
-        <span class="stat-label">Matched</span>
-        <span class="stat-value success">{stats.matchedCount}</span>
-        <span class="stat-amount">{formatCurrency(stats.matchedAmount.toFixed(2))}</span>
-      </div>
-    </Card>
-    <Card class="stat-card">
-      <div class="stat-content">
-        <span class="stat-label">Unmatched</span>
-        <span class="stat-value warning">{stats.unmatchedCount}</span>
-        <span class="stat-amount">
-          {formatCurrency(
-            bankTransactions
-              .filter(t => t.status === 'unmatched')
-              .reduce((sum, t) => sum + parseFloat(t.amount), 0)
-              .toFixed(2)
-          )}
-        </span>
-      </div>
-    </Card>
-    <Card class="stat-card">
-      <div class="stat-content">
-        <span class="stat-label">Disputed</span>
-        <span class="stat-value danger">{stats.disputedCount}</span>
-        <span class="stat-amount">
-          {formatCurrency(
-            bankTransactions
-              .filter(t => t.status === 'disputed')
-              .reduce((sum, t) => sum + parseFloat(t.amount), 0)
-              .toFixed(2)
-          )}
-        </span>
-      </div>
-    </Card>
-  </div>
-
-  <!-- Match Action Bar -->
-  {#if selectedTransactionId && selectedPaymentId}
-    <div class="match-action-bar" transition:fade>
-      <div class="match-info">
-        <span class="match-label">Ready to match:</span>
-        <Chip variant="primary" size="md">
-          Transaction: {bankTransactions.find(t => t.id === selectedTransactionId)?.description.substring(0, 20)}...
-        </Chip>
-        <span class="match-arrow">→</span>
-        <Chip variant="primary" size="md">
-          Payment: {systemPayments.find(p => p.id === selectedPaymentId)?.paymentNumber}
-        </Chip>
-      </div>
-      <Button variant="primary" on:click={handleMatch}>
-        Match Selected
-      </Button>
-    </div>
-  {/if}
-
-  <!-- Two-Panel Layout -->
-  <div class="panels-grid">
-    <!-- Bank Transactions Panel -->
-    <Card class="panel-card">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          Bank Transactions
-          <Badge variant="gray" size="sm">{filteredTransactions.length}</Badge>
-        </h2>
-        <FileUpload
-          id="bank-statement"
-          label=""
-          accept=".csv,.ofx,.qfx"
-          on:select={handleFileSelect}
-        />
-      </div>
-
-      {#if loading}
-        <div class="loading-container">
-          <Spinner size="lg" />
-          <p>Loading transactions...</p>
-        </div>
-      {:else if filteredTransactions.length === 0}
-        <div class="empty-container">
-          <svg class="w-12 h-12 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <p class="text-gray-500">No transactions found</p>
-        </div>
-      {:else}
-        <div class="transactions-list">
-          {#each filteredTransactions as transaction}
-            {@const suggestion = getMatchSuggestion(transaction.id)}
-            <div 
-              class="transaction-item"
-              class:selected={selectedTransactionId === transaction.id}
-              class:matched={transaction.status === 'matched'}
-              class:unmatched={transaction.status === 'unmatched'}
-              class:disputed={transaction.status === 'disputed'}
-              on:click={() => handleTransactionSelect(transaction)}
-              on:keydown={(e) => e.key === 'Enter' && handleTransactionSelect(transaction)}
-              role="button"
-              tabindex="0"
-            >
-              <div class="transaction-header">
-                <div class="transaction-main">
-                  <span class="transaction-date">{formatDate(transaction.date)}</span>
-                  <span class="transaction-description">{transaction.description}</span>
-                  {#if transaction.reference}
-                    <span class="transaction-reference">Ref: {transaction.reference}</span>
-                  {/if}
-                </div>
-                <div class="transaction-amount">
-                  <span class="amount">{formatCurrency(transaction.amount)}</span>
-                  <Badge variant={getStatusVariant(transaction.status)} size="sm">
-                    {transaction.status}
-                  </Badge>
-                </div>
+    {#if dateGroups.length === 0}
+      <EmptyState
+        title="No payments to reconcile"
+        description="There are no payment records available."
+        icon="💳"
+      />
+    {:else}
+      <div class="groups-list">
+        {#each dateGroups as group (group.date)}
+          <div class="date-group">
+            <div class="date-header">
+              <div class="date-header-left">
+                <span class="date-label">{formatDateHeader(group.date)}</span>
+                <span class="date-count">{group.payments.length} payment{group.payments.length !== 1 ? 's' : ''}</span>
               </div>
-              
-              {#if suggestion && transaction.status === 'unmatched'}
-                <div class="suggestion-badge">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  <span>Suggested match ({suggestion.confidence}% confidence)</span>
-                </div>
-              {/if}
-              
-              {#if transaction.status === 'matched' && transaction.matchedPaymentId}
-                <div class="matched-info">
-                  <span>Matched to: {systemPayments.find(p => p.id === transaction.matchedPaymentId)?.paymentNumber}</span>
-                  <Button variant="ghost" size="sm" on:click={(e) => { e.stopPropagation(); handleUnmatch(transaction); }}>
-                    Unmatch
-                  </Button>
-                </div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </Card>
-
-    <!-- System Payments Panel -->
-    <Card class="panel-card">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          System Payments
-          <Badge variant="gray" size="sm">{unmatchedPayments.length}</Badge>
-        </h2>
-        <span class="panel-subtitle">Unmatched payments</span>
-      </div>
-
-      {#if loading}
-        <div class="loading-container">
-          <Spinner size="lg" />
-          <p>Loading payments...</p>
-        </div>
-      {:else if unmatchedPayments.length === 0}
-        <div class="empty-container">
-          <svg class="w-12 h-12 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-          </svg>
-          <p class="text-gray-500">No unmatched payments</p>
-        </div>
-      {:else}
-        <div class="payments-list">
-          {#each unmatchedPayments as payment}
-            <div 
-              class="payment-item"
-              class:selected={selectedPaymentId === payment.id}
-              on:click={() => handlePaymentSelect(payment)}
-              on:keydown={(e) => e.key === 'Enter' && handlePaymentSelect(payment)}
-              role="button"
-              tabindex="0"
-            >
-              <div class="payment-header">
-                <div class="payment-main">
-                  <span class="payment-number">{payment.paymentNumber}</span>
-                  <span class="payment-client">{payment.clientName}</span>
-                  <span class="payment-invoice">{payment.invoiceNumber}</span>
-                </div>
-                <div class="payment-amount">
-                  <span class="amount">{formatCurrency(payment.amount)}</span>
-                  <span class="method">{payment.method}</span>
-                </div>
-              </div>
-              <div class="payment-date">
-                {formatDate(payment.paidAt)}
+              <div class="date-totals">
+                {#if group.reconciled > 0}
+                  <span class="date-reconciled">✓ {formatCurrency(group.reconciled)}</span>
+                {/if}
+                {#if group.unreconciled > 0}
+                  <span class="date-unreconciled">⏳ {formatCurrency(group.unreconciled)}</span>
+                {/if}
               </div>
             </div>
-          {/each}
-        </div>
-      {/if}
-    </Card>
-  </div>
-
-  <!-- Auto-Match Suggestions -->
-  {#if matchSuggestions.length > 0}
-    <Card class="suggestions-card">
-      <h3 class="suggestions-title">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        Auto-Match Suggestions ({matchSuggestions.length})
-      </h3>
-      <div class="suggestions-list">
-        {#each matchSuggestions as suggestion}
-          {@const transaction = bankTransactions.find(t => t.id === suggestion.transactionId)}
-          {@const payment = systemPayments.find(p => p.id === suggestion.paymentId)}
-          {#if transaction && payment}
-            <div class="suggestion-item">
-              <div class="suggestion-match">
-                <span class="suggestion-transaction">{transaction.description}</span>
-                <span class="suggestion-arrow">↔</span>
-                <span class="suggestion-payment">{payment.paymentNumber}</span>
-              </div>
-              <div class="suggestion-details">
-                <span class="suggestion-amount">{formatCurrency(transaction.amount)}</span>
-                <Badge variant="green" size="sm">{suggestion.confidence}% match</Badge>
-                <span class="suggestion-reason">{suggestion.reason}</span>
-              </div>
-              <Button 
-                variant="primary" 
-                size="sm" 
-                on:click={() => {
-                  selectedTransactionId = suggestion.transactionId;
-                  selectedPaymentId = suggestion.paymentId;
-                  handleMatch();
-                }}
-              >
-                Apply Match
-              </Button>
-            </div>
-          {/if}
+            <Card>
+              <table class="payments-table">
+                <thead>
+                  <tr>
+                    <th>Payment #</th>
+                    <th>Client</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each group.payments as payment (payment.id)}
+                    <tr>
+                      <td class="td-mono">{payment.paymentNumber}</td>
+                      <td>{payment.clientName}</td>
+                      <td class="td-amount">{formatCurrency(payment.amount)} {payment.currency}</td>
+                      <td>{formatMethodLabel(payment.method)}</td>
+                      <td>
+                        <Badge variant={getStatusVariant(payment.status)} dot>
+                          {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
+                        </Badge>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </Card>
+          </div>
         {/each}
       </div>
-    </Card>
+    {/if}
   {/if}
 </div>
-
-<!-- Confirmation Modal -->
-<Modal
-  bind:open={showConfirmModal}
-  title={confirmAction === 'match' ? 'Confirm Match' : confirmAction === 'unmatch' ? 'Confirm Unmatch' : 'Complete Reconciliation'}
-  size="sm"
->
-  {#if confirmAction === 'match'}
-    <p>Match the selected transaction with the selected payment?</p>
-    <p class="text-sm text-gray-500 mt-2">This will mark both items as matched.</p>
-  {:else if confirmAction === 'unmatch'}
-    <p>Remove the match for this transaction?</p>
-    <p class="text-sm text-gray-500 mt-2">Both items will be marked as unmatched.</p>
-  {:else if confirmAction === 'reconcile'}
-    <p>Mark reconciliation as complete?</p>
-    <p class="text-sm text-gray-500 mt-2">
-      {#if stats.unmatchedCount > 0}
-        <span class="text-yellow-600">Warning: There are still {stats.unmatchedCount} unmatched transactions.</span>
-      {:else}
-        All transactions have been matched. This action cannot be undone.
-      {/if}
-    </p>
-  {/if}
-  
-  <svelte:fragment slot="footer" let:close>
-    <Button variant="secondary" on:click={() => { close(); showConfirmModal = false; }} disabled={processing}>
-      Cancel
-    </Button>
-    <Button 
-      variant={confirmAction === 'unmatch' ? 'danger' : 'primary'} 
-      on:click={confirmAction === 'reconcile' ? confirmReconcile : confirmMatchAction}
-      loading={processing}
-    >
-      {processing ? 'Processing...' : 'Confirm'}
-    </Button>
-  </svelte:fragment>
-</Modal>
-
-<!-- Export Success Modal -->
-<Modal
-  bind:open={showExportModal}
-  title="Export Complete"
-  size="sm"
->
-  <div class="export-success">
-    <svg class="w-12 h-12 text-green-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-    <p>Reconciliation report exported successfully!</p>
-  </div>
-</Modal>
-
-<script context="module">
-  import { fade } from 'svelte/transition';
-</script>
 
 <style>
   .page-container {
     padding: 1.5rem;
-    max-width: 1600px;
+    max-width: 1100px;
     margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   .page-header {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-    gap: 1rem;
   }
 
   .page-title {
-    font-size: 1.875rem;
+    font-size: 1.5rem;
     font-weight: 700;
-    color: var(--color-gray-900);
+    color: var(--color-gray-900, #111827);
     margin: 0;
   }
 
-  .page-description {
-    color: var(--color-gray-500);
-    margin-top: 0.25rem;
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  :global(.filters-card) {
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .filters-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .date-range {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .filter-label {
+  .page-subtitle {
     font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--color-gray-700);
+    color: var(--color-gray-500, #6b7280);
+    margin: 0.25rem 0 0;
   }
 
-  .date-separator {
-    color: var(--color-gray-500);
-  }
-
-  .status-filter {
-    min-width: 200px;
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.stat-card) {
-    padding: 1rem;
-  }
-
-  .stat-content {
+  .spinner-wrap {
     display: flex;
-    flex-direction: column;
-  }
-
-  .stat-label {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-    margin-bottom: 0.5rem;
-  }
-
-  .stat-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--color-gray-900);
-  }
-
-  .stat-value.success {
-    color: var(--color-green-600);
-  }
-
-  .stat-value.warning {
-    color: var(--color-yellow-600);
-  }
-
-  .stat-value.danger {
-    color: var(--color-red-600);
-  }
-
-  .stat-amount {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-    margin-top: 0.25rem;
-  }
-
-  .match-action-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background-color: var(--color-primary-50);
-    border: 1px solid var(--color-primary-200);
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .match-info {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .match-label {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-  }
-
-  .match-arrow {
-    color: var(--color-gray-400);
-  }
-
-  .panels-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  :global(.panel-card) {
-    padding: 1rem;
-    min-height: 500px;
-  }
-
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--color-gray-200);
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .panel-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .panel-subtitle {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-  }
-
-  .loading-container,
-  .empty-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
     justify-content: center;
-    padding: 3rem;
-    gap: 1rem;
-    color: var(--color-gray-500);
+    padding: 4rem 0;
   }
 
-  .transactions-list,
-  .payments-list {
+  .summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    padding: 1rem 1.5rem;
+    background: var(--color-white, #fff);
+    border: 1px solid var(--color-gray-200, #e5e7eb);
+    border-radius: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .summary-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--color-gray-500, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .summary-value {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--color-gray-900, #111827);
+  }
+
+  .summary-value.reconciled { color: #059669; }
+  .summary-value.unreconciled { color: #d97706; }
+
+  .summary-count {
+    font-size: 0.75rem;
+    color: var(--color-gray-400, #9ca3af);
+  }
+
+  .summary-divider {
+    width: 1px;
+    height: 3rem;
+    background: var(--color-gray-200, #e5e7eb);
+  }
+
+  .groups-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .date-group {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-height: 500px;
-    overflow-y: auto;
   }
 
-  .transaction-item,
-  .payment-item {
-    padding: 1rem;
-    border: 2px solid var(--color-gray-200);
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .transaction-item:hover,
-  .payment-item:hover {
-    border-color: var(--color-primary-300);
-    background-color: var(--color-gray-50);
-  }
-
-  .transaction-item.selected,
-  .payment-item.selected {
-    border-color: var(--color-primary-500);
-    background-color: var(--color-primary-50);
-  }
-
-  .transaction-item.matched {
-    border-left: 4px solid var(--color-green-500);
-  }
-
-  .transaction-item.unmatched {
-    border-left: 4px solid var(--color-yellow-500);
-  }
-
-  .transaction-item.disputed {
-    border-left: 4px solid var(--color-red-500);
-  }
-
-  .transaction-header,
-  .payment-header {
+  .date-header {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .transaction-main,
-  .payment-main {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    flex: 1;
-  }
-
-  .transaction-date,
-  .payment-date {
-    font-size: 0.75rem;
-    color: var(--color-gray-500);
-  }
-
-  .transaction-description,
-  .payment-number {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-  }
-
-  .transaction-reference,
-  .payment-invoice {
-    font-size: 0.75rem;
-    color: var(--color-gray-500);
-  }
-
-  .payment-client {
-    font-size: 0.875rem;
-    color: var(--color-gray-700);
-  }
-
-  .transaction-amount,
-  .payment-amount {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.25rem;
-  }
-
-  .amount {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-  }
-
-  .method {
-    font-size: 0.75rem;
-    color: var(--color-gray-500);
-    text-transform: capitalize;
-  }
-
-  .suggestion-badge {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    margin-top: 0.5rem;
-    padding: 0.375rem 0.75rem;
-    background-color: var(--color-blue-100);
-    color: var(--color-blue-700);
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    width: fit-content;
-  }
-
-  .matched-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid var(--color-gray-200);
-    font-size: 0.75rem;
-    color: var(--color-green-600);
-  }
-
-  :global(.suggestions-card) {
-    padding: 1rem;
-  }
-
-  .suggestions-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-    margin: 0 0 1rem 0;
-    display: flex;
-    align-items: center;
+    flex-wrap: wrap;
     gap: 0.5rem;
   }
 
-  .suggestions-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .suggestion-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem;
-    background-color: var(--color-gray-50);
-    border-radius: 0.5rem;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .suggestion-match {
+  .date-header-left {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    flex: 1;
-    flex-wrap: wrap;
   }
 
-  .suggestion-transaction,
-  .suggestion-payment {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--color-gray-900);
-  }
-
-  .suggestion-arrow {
-    color: var(--color-gray-400);
-  }
-
-  .suggestion-details {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .suggestion-amount {
-    font-size: 0.875rem;
+  .date-label {
+    font-size: 0.9375rem;
     font-weight: 600;
-    color: var(--color-gray-900);
+    color: var(--color-gray-800, #1f2937);
   }
 
-  .suggestion-reason {
+  .date-count {
     font-size: 0.75rem;
-    color: var(--color-gray-500);
+    color: var(--color-gray-400, #9ca3af);
+    background: var(--color-gray-100, #f3f4f6);
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
   }
 
-  .export-success {
+  .date-totals {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 1rem;
-    text-align: center;
+    gap: 1rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
   }
 
-  @media (max-width: 1200px) {
-    .stats-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
+  .date-reconciled { color: #059669; }
+  .date-unreconciled { color: #d97706; }
 
-    .panels-grid {
-      grid-template-columns: 1fr;
-    }
+  .payments-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
   }
 
-  @media (max-width: 768px) {
-    .page-header {
-      flex-direction: column;
-    }
+  .payments-table thead tr th {
+    padding: 0.625rem 0.875rem;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-gray-500, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--color-gray-100, #f3f4f6);
+  }
 
-    .stats-grid {
-      grid-template-columns: 1fr;
-    }
+  .payments-table tbody tr td {
+    padding: 0.75rem 0.875rem;
+    color: var(--color-gray-700, #374151);
+    border-bottom: 1px solid var(--color-gray-50, #f9fafb);
+    vertical-align: middle;
+  }
 
-    .filters-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
+  .payments-table tbody tr:last-child td {
+    border-bottom: none;
+  }
 
-    .date-range {
-      flex-direction: column;
-      align-items: stretch;
-    }
+  .td-mono {
+    font-family: monospace;
+    font-size: 0.8125rem;
+    color: var(--color-gray-600, #4b5563);
+  }
 
-    .match-action-bar {
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .suggestion-item {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .suggestion-match {
-      flex-direction: column;
-      align-items: flex-start;
-    }
+  .td-amount {
+    font-weight: 600;
+    color: var(--color-gray-900, #111827);
   }
 </style>

@@ -4,986 +4,481 @@
   import Button from '$lib/shared/components/forms/Button.svelte';
   import Input from '$lib/shared/components/forms/Input.svelte';
   import Select from '$lib/shared/components/forms/Select.svelte';
-  import DatePicker from '$lib/shared/components/forms/DatePicker.svelte';
   import Textarea from '$lib/shared/components/forms/Textarea.svelte';
   import Card from '$lib/shared/components/layout/Card.svelte';
-  import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
-  import Badge from '$lib/shared/components/display/Badge.svelte';
-  import { createOrder, type OrderItem, type Address } from '$lib/shared/api/orders';
+  import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import { getClients, type Client } from '$lib/shared/api/clients';
-  import { getProducts, type Product } from '$lib/shared/api/products';
+  import { createOrder } from '$lib/shared/api/orders';
 
-  // Form state
-  let selectedClientId = '';
-  let orderNumber = '';
-  let orderDate = new Date().toISOString().split('T')[0];
-  let notes = '';
-  let taxRate = '8';
-  let saveAsDraft = true;
-
-  // Shipping address
-  let shippingAddress: Address = {
-    street: '',
-    city: '',
-    state: '',
-    postalCode: '',
-    country: ''
-  };
-  let useClientAddress = false;
-
-  // Line items
-  let lineItems: Array<{
-    id: string;
-    productId: string;
+  interface LineItemDraft {
     productName: string;
-    quantity: string;
-    unitPrice: string;
-  }> = [];
+    quantityStr: string;
+    unitPriceStr: string;
+  }
 
-  // Data loading
   let clients: Client[] = [];
-  let products: Product[] = [];
-  let loadingClients = true;
-  let loadingProducts = true;
+  let clientsLoading = true;
+
+  let selectedClientId = '';
+  let shippingStreet = '';
+  let shippingCity = '';
+  let shippingState = '';
+  let shippingPostalCode = '';
+  let shippingCountry = '';
+  let notes = '';
+
+  let lineItems: LineItemDraft[] = [{ productName: '', quantityStr: '1', unitPriceStr: '0' }];
+
   let submitting = false;
   let error: string | null = null;
-  let errors: Record<string, string> = {};
 
-  // Computed values
+  $: clientOptions = [
+    { value: '', label: 'Select a client...' },
+    ...clients.map((c) => ({ value: c.id, label: c.name }))
+  ];
+
   $: subtotal = lineItems.reduce((sum, item) => {
-    const price = parseFloat(item.unitPrice) || 0;
-    const qty = parseInt(item.quantity) || 0;
-    return sum + (qty * price);
+    const qty = parseFloat(item.quantityStr) || 0;
+    const price = parseFloat(item.unitPriceStr) || 0;
+    return sum + qty * price;
   }, 0);
 
-  $: taxAmount = subtotal * ((parseFloat(taxRate) || 0) / 100);
-  $: total = subtotal + taxAmount;
-
-  $: clientOptions = clients.map(client => ({
-    value: client.id,
-    label: `${client.name} (${client.email})`
-  }));
-
-  $: productOptions = products.map(product => ({
-    value: product.id,
-    label: `${product.name} - ${formatCurrency(parseFloat(product.price))}`
-  }));
-
-  $: selectedClient = clients.find(c => c.id === selectedClientId);
-
-  onMount(async () => {
-    await Promise.all([loadClients(), loadProducts()]);
-    generateOrderNumber();
-  });
-
-  async function loadClients() {
-    loadingClients = true;
-    try {
-      const response = await getClients();
-      clients = response.data;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load clients';
-    } finally {
-      loadingClients = false;
-    }
-  }
-
-  async function loadProducts() {
-    loadingProducts = true;
-    try {
-      const response = await getProducts();
-      products = response.data;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load products';
-    } finally {
-      loadingProducts = false;
-    }
-  }
-
-  function generateOrderNumber() {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    orderNumber = `ORD-${year}-${month}-${day}-${random}`;
+  function formatCurrency(amount: number): string {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
   }
 
   function addLineItem() {
-    lineItems = [
-      ...lineItems,
-      { id: crypto.randomUUID(), productId: '', productName: '', quantity: '1', unitPrice: '' }
-    ];
+    lineItems = [...lineItems, { productName: '', quantityStr: '1', unitPriceStr: '0' }];
   }
 
   function removeLineItem(index: number) {
-    if (lineItems.length > 0) {
-      lineItems = lineItems.filter((_, i) => i !== index);
-    }
+    lineItems = lineItems.filter((_, i) => i !== index);
   }
 
-  function updateLineItemProduct(index: number, productId: string) {
-    const product = products.find(p => p.id === productId);
-    lineItems = lineItems.map((item, i) => {
-      if (i === index) {
-        return {
-          ...item,
-          productId,
-          productName: product?.name || '',
-          unitPrice: product?.price || ''
-        };
-      }
-      return item;
-    });
-  }
-
-  function updateLineItemQuantity(index: number, quantity: string) {
-    lineItems = lineItems.map((item, i) => {
-      if (i === index) {
-        return { ...item, quantity };
-      }
-      return item;
-    });
-  }
-
-  function getLineTotal(item: typeof lineItems[0]): number {
-    const price = parseFloat(item.unitPrice) || 0;
-    const qty = parseInt(item.quantity) || 0;
-    return qty * price;
-  }
-
-  function handleUseClientAddress() {
-    useClientAddress = !useClientAddress;
-    if (useClientAddress && selectedClient?.billingAddress) {
-      shippingAddress = { ...selectedClient.billingAddress };
-    } else if (!useClientAddress) {
-      shippingAddress = {
-        street: '',
-        city: '',
-        state: '',
-        postalCode: '',
-        country: ''
-      };
+  function validate(): string | null {
+    if (!selectedClientId) return 'Please select a client';
+    if (lineItems.length === 0) return 'Please add at least one item';
+    for (let i = 0; i < lineItems.length; i++) {
+      const item = lineItems[i];
+      const qty = parseFloat(item.quantityStr);
+      const price = parseFloat(item.unitPriceStr);
+      if (!item.productName.trim()) return `Item ${i + 1}: product name is required`;
+      if (isNaN(qty) || qty <= 0) return `Item ${i + 1}: quantity must be greater than 0`;
+      if (isNaN(price) || price <= 0) return `Item ${i + 1}: unit price must be greater than 0`;
     }
-  }
-
-  function validateForm(): boolean {
-    errors = {};
-
-    if (!selectedClientId) {
-      errors.clientId = 'Please select a client';
-    }
-
-    if (!orderNumber.trim()) {
-      errors.orderNumber = 'Order number is required';
-    }
-
-    if (!orderDate) {
-      errors.orderDate = 'Order date is required';
-    }
-
-    // Validate shipping address
-    if (!shippingAddress.street.trim()) {
-      errors.shippingStreet = 'Street is required';
-    }
-    if (!shippingAddress.city.trim()) {
-      errors.shippingCity = 'City is required';
-    }
-    if (!shippingAddress.state.trim()) {
-      errors.shippingState = 'State is required';
-    }
-    if (!shippingAddress.postalCode.trim()) {
-      errors.shippingPostalCode = 'Postal code is required';
-    }
-    if (!shippingAddress.country.trim()) {
-      errors.shippingCountry = 'Country is required';
-    }
-
-    // Validate line items
-    if (lineItems.length === 0) {
-      errors.lineItems = 'At least one line item is required';
-    } else {
-      let hasLineItemErrors = false;
-      lineItems.forEach((item, index) => {
-        if (!item.productId) {
-          errors[`item_${index}_product`] = 'Product is required';
-          hasLineItemErrors = true;
-        }
-        if (!item.quantity || parseInt(item.quantity) <= 0) {
-          errors[`item_${index}_quantity`] = 'Quantity must be greater than 0';
-          hasLineItemErrors = true;
-        }
-      });
-
-      if (hasLineItemErrors) {
-        errors.lineItems = 'Please fix line item errors';
-      }
-    }
-
-    return Object.keys(errors).length === 0;
+    return null;
   }
 
   async function handleSubmit() {
-    if (!validateForm()) {
+    const validationError = validate();
+    if (validationError) {
+      error = validationError;
       return;
     }
 
-    const items: OrderItem[] = lineItems.map(item => ({
-      productId: item.productId,
-      productName: item.productName,
-      quantity: parseInt(item.quantity) || 1,
-      unitPrice: item.unitPrice,
-      total: getLineTotal(item).toFixed(2)
-    }));
-
-    const data = {
-      clientId: selectedClientId,
-      items,
-      shippingAddress,
-      notes: notes || undefined
-    };
-
     submitting = true;
     error = null;
-
     try {
-      const order = await createOrder(data);
-      goto(`/orders/${order.id}`);
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to create order';
+      const items = lineItems.map((item) => {
+        const qty = parseFloat(item.quantityStr);
+        const price = parseFloat(item.unitPriceStr);
+        return {
+          productName: item.productName.trim(),
+          quantity: qty,
+          unitPrice: price.toFixed(2),
+          total: (qty * price).toFixed(2)
+        };
+      });
+
+      const shippingAddress =
+        shippingStreet || shippingCity
+          ? {
+              street: shippingStreet,
+              city: shippingCity,
+              state: shippingState,
+              postalCode: shippingPostalCode,
+              country: shippingCountry
+            }
+          : undefined;
+
+      const newOrder = await createOrder({
+        clientId: selectedClientId,
+        items,
+        shippingAddress,
+        notes: notes.trim() || undefined
+      });
+
+      goto(`/orders/${newOrder.id}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to create order';
+    } finally {
       submitting = false;
     }
   }
 
-  function handleCancel() {
-    goto('/orders');
-  }
-
-  function formatCurrency(value: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(value);
-  }
+  onMount(async () => {
+    try {
+      const response = await getClients({ pageSize: 500 });
+      clients = response.data;
+    } catch {
+      // non-fatal
+    } finally {
+      clientsLoading = false;
+    }
+  });
 </script>
-
-<svelte:head>
-  <title>New Order | ERP System</title>
-</svelte:head>
 
 <div class="page-container">
   <div class="page-header">
-    <div class="header-content">
+    <div>
+      <Button variant="ghost" size="sm" on:click={() => goto('/orders')}>← Back to Orders</Button>
       <h1 class="page-title">New Order</h1>
-      <p class="page-description">Create a new order for your client</p>
-    </div>
-    <div class="header-actions">
-      <Button variant="secondary" on:click={handleCancel} disabled={submitting}>
-        Cancel
-      </Button>
     </div>
   </div>
 
   {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => error = null} class="mb-4">
-      {error}
-    </Alert>
+    <Alert variant="error" dismissible on:dismiss={() => (error = null)}>{error}</Alert>
   {/if}
 
-  {#if loadingClients || loadingProducts}
-    <div class="loading-container">
-      <Spinner size="lg" />
-      <p>Loading...</p>
-    </div>
-  {:else}
-    <form on:submit|preventDefault={handleSubmit}>
-      <div class="form-grid">
-        <!-- Client Selection -->
-        <Card class="form-card">
-          <h2 class="section-title">Client Information</h2>
-          <div class="form-group">
-            <Select
-              id="client"
-              label="Client"
-              options={clientOptions}
-              bind:value={selectedClientId}
-              placeholder="Select a client"
-              required
-              error={errors.clientId}
-            />
-            {#if selectedClient}
-              <div class="client-preview">
-                <Badge variant="blue" size="sm">{selectedClient.code}</Badge>
-                <span class="client-email">{selectedClient.email}</span>
-                {#if selectedClient.phone}
-                  <span class="client-phone">{selectedClient.phone}</span>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        </Card>
+  <div class="form-grid">
+    <div class="main-col">
+      <!-- Client Selection -->
+      <Card>
+        <h2 class="section-title">Customer</h2>
+        {#if clientsLoading}
+          <div class="inline-spinner"><Spinner size="lg" /></div>
+        {:else}
+          <Select
+            id="client"
+            label="Client *"
+            options={clientOptions}
+            bind:value={selectedClientId}
+          />
+        {/if}
+      </Card>
 
-        <!-- Order Details -->
-        <Card class="form-card">
-          <h2 class="section-title">Order Details</h2>
-          <div class="form-row">
-            <div class="form-group">
-              <Input
-                id="orderNumber"
-                label="Order Number"
-                type="text"
-                bind:value={orderNumber}
-                required
-                error={errors.orderNumber}
-                readonly
-              />
-            </div>
-            <div class="form-group">
-              <DatePicker
-                id="orderDate"
-                label="Order Date"
-                bind:value={orderDate}
-                required
-                error={errors.orderDate}
-              />
-            </div>
-          </div>
-        </Card>
+      <!-- Line Items -->
+      <Card>
+        <div class="section-header">
+          <h2 class="section-title">Order Items</h2>
+          <Button variant="secondary" size="sm" on:click={addLineItem}>+ Add Item</Button>
+        </div>
 
-        <!-- Line Items -->
-        <Card class="form-card full-width">
+        <div class="line-items">
           <div class="line-items-header">
-            <h2 class="section-title">Line Items</h2>
-            <Button variant="secondary" size="sm" on:click={addLineItem} type="button">
-              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Item
-            </Button>
+            <span class="col-product">Product</span>
+            <span class="col-qty">Qty</span>
+            <span class="col-price">Unit Price</span>
+            <span class="col-total">Total</span>
+            <span class="col-action"></span>
           </div>
 
-          {#if errors.lineItems}
-            <Alert variant="error" class="mb-4">{errors.lineItems}</Alert>
-          {/if}
-
-          {#if lineItems.length === 0}
-            <div class="empty-line-items">
-              <p class="text-gray-500">No items added yet. Click "Add Item" to add products to this order.</p>
-            </div>
-          {:else}
-            <div class="line-items-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th class="product-col">Product</th>
-                    <th class="quantity-col">Quantity</th>
-                    <th class="price-col">Unit Price</th>
-                    <th class="total-col">Total</th>
-                    <th class="actions-col"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each lineItems as item, index (item.id)}
-                    <tr>
-                      <td>
-                        <Select
-                          id="item-product-{index}"
-                          label=""
-                          options={productOptions}
-                          bind:value={item.productId}
-                          placeholder="Select a product"
-                          error={errors[`item_${index}_product`]}
-                          on:change={(e) => updateLineItemProduct(index, e.detail)}
-                        />
-                      </td>
-                      <td>
-                        <Input
-                          id="item-qty-{index}"
-                          label=""
-                          type="number"
-                          bind:value={item.quantity}
-                          min="1"
-                          step="1"
-                          error={errors[`item_${index}_quantity`]}
-                        />
-                      </td>
-                      <td class="price-cell">
-                        <Input
-                          id="item-price-{index}"
-                          label=""
-                          type="number"
-                          placeholder="0.00"
-                          bind:value={item.unitPrice}
-                          min="0"
-                          step="0.01"
-                          readonly
-                        />
-                      </td>
-                      <td class="line-total">
-                        {formatCurrency(getLineTotal(item))}
-                      </td>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          on:click={() => removeLineItem(index)}
-                          type="button"
-                        >
-                          <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </Button>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
-        </Card>
-
-        <!-- Shipping Address -->
-        <Card class="form-card full-width">
-          <div class="shipping-header">
-            <h2 class="section-title">Shipping Address</h2>
-            {#if selectedClient?.billingAddress}
-              <label class="checkbox-option">
-                <input
-                  type="checkbox"
-                  bind:checked={useClientAddress}
-                  on:change={handleUseClientAddress}
-                />
-                <span class="checkbox-label">Use client's billing address</span>
-              </label>
-            {/if}
-          </div>
-          <div class="address-grid">
-            <div class="form-group full-width">
-              <Input
-                id="shippingStreet"
-                label="Street Address"
-                type="text"
-                bind:value={shippingAddress.street}
-                placeholder="123 Main Street"
-                required
-                error={errors.shippingStreet}
-              />
-            </div>
-            <div class="form-group">
-              <Input
-                id="shippingCity"
-                label="City"
-                type="text"
-                bind:value={shippingAddress.city}
-                placeholder="New York"
-                required
-                error={errors.shippingCity}
-              />
-            </div>
-            <div class="form-group">
-              <Input
-                id="shippingState"
-                label="State/Province"
-                type="text"
-                bind:value={shippingAddress.state}
-                placeholder="NY"
-                required
-                error={errors.shippingState}
-              />
-            </div>
-            <div class="form-group">
-              <Input
-                id="shippingPostalCode"
-                label="Postal Code"
-                type="text"
-                bind:value={shippingAddress.postalCode}
-                placeholder="10001"
-                required
-                error={errors.shippingPostalCode}
-              />
-            </div>
-            <div class="form-group">
-              <Input
-                id="shippingCountry"
-                label="Country"
-                type="text"
-                bind:value={shippingAddress.country}
-                placeholder="United States"
-                required
-                error={errors.shippingCountry}
-              />
-            </div>
-          </div>
-        </Card>
-
-        <!-- Totals -->
-        <Card class="form-card totals-card">
-          <h2 class="section-title">Totals</h2>
-          <div class="totals-section">
-            <div class="totals-row">
-              <span class="label">Subtotal</span>
-              <span class="value">{formatCurrency(subtotal)}</span>
-            </div>
-            <div class="totals-row tax-row">
-              <div class="tax-input">
-                <label for="taxRate">Tax Rate (%)</label>
+          {#each lineItems as item, i (i)}
+            <div class="line-item-row">
+              <div class="col-product">
                 <Input
-                  id="taxRate"
+                  id="product-{i}"
+                  label=""
+                  type="text"
+                  placeholder="Product name"
+                  bind:value={item.productName}
+                />
+              </div>
+              <div class="col-qty">
+                <Input
+                  id="qty-{i}"
                   label=""
                   type="number"
-                  bind:value={taxRate}
-                  min="0"
-                  max="100"
-                  step="0.01"
+                  placeholder="1"
+                  bind:value={item.quantityStr}
                 />
               </div>
-              <span class="value">{formatCurrency(taxAmount)}</span>
-            </div>
-            <div class="totals-row total-row">
-              <span class="label">Total</span>
-              <span class="value total">{formatCurrency(total)}</span>
-            </div>
-          </div>
-        </Card>
-
-        <!-- Notes -->
-        <Card class="form-card">
-          <h2 class="section-title">Additional Information</h2>
-          <Textarea
-            id="notes"
-            label="Notes"
-            bind:value={notes}
-            placeholder="Add any additional notes or special instructions..."
-            rows={4}
-          />
-        </Card>
-
-        <!-- Actions -->
-        <Card class="form-card full-width actions-card">
-          <div class="actions-row">
-            <div class="save-options">
-              <label class="radio-option">
-                <input
-                  type="radio"
-                  name="saveOption"
-                  value="draft"
-                  bind:group={saveAsDraft}
-                  checked={saveAsDraft}
+              <div class="col-price">
+                <Input
+                  id="price-{i}"
+                  label=""
+                  type="number"
+                  placeholder="0.00"
+                  bind:value={item.unitPriceStr}
                 />
-                <span class="radio-label">
-                  <span class="radio-title">Save as Draft</span>
-                  <span class="radio-description">Order will be saved as pending</span>
-                </span>
-              </label>
-              <label class="radio-option">
-                <input
-                  type="radio"
-                  name="saveOption"
-                  value="confirmed"
-                  bind:group={saveAsDraft}
-                  checked={!saveAsDraft}
-                />
-                <span class="radio-label">
-                  <span class="radio-title">Confirm Immediately</span>
-                  <span class="radio-description">Order will be confirmed and processed</span>
-                </span>
-              </label>
+              </div>
+              <div class="col-total line-total">
+                {formatCurrency((parseFloat(item.quantityStr) || 0) * (parseFloat(item.unitPriceStr) || 0))}
+              </div>
+              <div class="col-action">
+                {#if lineItems.length > 1}
+                  <button
+                    class="remove-btn"
+                    type="button"
+                    on:click={() => removeLineItem(i)}
+                    aria-label="Remove item"
+                  >
+                    ✕
+                  </button>
+                {/if}
+              </div>
             </div>
-            <div class="action-buttons">
-              <Button variant="secondary" on:click={handleCancel} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button variant="primary" type="submit" loading={submitting}>
-                {submitting ? 'Creating...' : (saveAsDraft ? 'Save as Draft' : 'Create & Confirm')}
-              </Button>
-            </div>
+          {/each}
+
+          <div class="subtotal-row">
+            <span class="subtotal-label">Subtotal</span>
+            <span class="subtotal-value">{formatCurrency(subtotal)}</span>
           </div>
-        </Card>
-      </div>
-    </form>
-  {/if}
+        </div>
+      </Card>
+
+      <!-- Notes -->
+      <Card>
+        <h2 class="section-title">Order Notes</h2>
+        <Textarea
+          id="notes"
+          label=""
+          placeholder="Add any special instructions or notes..."
+          bind:value={notes}
+          rows={3}
+        />
+      </Card>
+    </div>
+
+    <div class="side-col">
+      <!-- Shipping Address -->
+      <Card>
+        <h2 class="section-title">Shipping Address</h2>
+        <div class="address-fields">
+          <Input id="street" label="Street" type="text" placeholder="123 Main St" bind:value={shippingStreet} />
+          <div class="two-col">
+            <Input id="city" label="City" type="text" placeholder="City" bind:value={shippingCity} />
+            <Input id="state" label="State" type="text" placeholder="State" bind:value={shippingState} />
+          </div>
+          <div class="two-col">
+            <Input id="postal" label="Postal Code" type="text" placeholder="12345" bind:value={shippingPostalCode} />
+            <Input id="country" label="Country" type="text" placeholder="US" bind:value={shippingCountry} />
+          </div>
+        </div>
+      </Card>
+
+      <!-- Summary & Submit -->
+      <Card>
+        <h2 class="section-title">Order Summary</h2>
+        <div class="summary-rows">
+          <div class="summary-row">
+            <span>Items</span>
+            <span>{lineItems.length}</span>
+          </div>
+          <div class="summary-row total-row">
+            <span>Subtotal</span>
+            <span>{formatCurrency(subtotal)}</span>
+          </div>
+        </div>
+        <div class="form-actions">
+          <Button
+            variant="primary"
+            on:click={handleSubmit}
+            loading={submitting}
+            disabled={submitting}
+          >
+            Create Order
+          </Button>
+          <Button variant="ghost" on:click={() => goto('/orders')} disabled={submitting}>
+            Cancel
+          </Button>
+        </div>
+      </Card>
+    </div>
+  </div>
 </div>
 
 <style>
   .page-container {
     padding: 1.5rem;
-    max-width: 1200px;
+    max-width: 1100px;
     margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   .page-header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1.5rem;
-  }
-
-  .page-title {
-    font-size: 1.875rem;
-    font-weight: 700;
-    color: var(--color-gray-900);
-    margin: 0;
-  }
-
-  .page-description {
-    color: var(--color-gray-500);
-    margin-top: 0.25rem;
-  }
-
-  .header-actions {
-    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
   }
 
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem;
-    gap: 1rem;
-    color: var(--color-gray-500);
+  .page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-gray-900, #111827);
+    margin: 0.25rem 0 0;
   }
 
   .form-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-
-  :global(.form-card) {
-    padding: 1.5rem;
-  }
-
-  :global(.form-card.full-width) {
-    grid-column: 1 / -1;
-  }
-
-  .section-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-    margin: 0 0 1rem 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-gray-200);
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  .form-group:last-child {
-    margin-bottom: 0;
-  }
-
-  .form-group.full-width {
-    grid-column: 1 / -1;
-  }
-
-  .form-row {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-
-  .client-preview {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background-color: var(--color-gray-50);
-    border-radius: 0.5rem;
-  }
-
-  .client-email {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-  }
-
-  .client-phone {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-  }
-
-  .line-items-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .line-items-header .section-title {
-    margin: 0;
-    padding: 0;
-    border: none;
-  }
-
-  .empty-line-items {
-    padding: 2rem;
-    text-align: center;
-    background-color: var(--color-gray-50);
-    border-radius: 0.5rem;
-    border: 2px dashed var(--color-gray-200);
-  }
-
-  .line-items-table {
-    overflow-x: auto;
-  }
-
-  .line-items-table table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .line-items-table th {
-    text-align: left;
-    padding: 0.75rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-gray-500);
-    border-bottom: 1px solid var(--color-gray-200);
-  }
-
-  .line-items-table td {
-    padding: 0.5rem;
-    vertical-align: top;
-  }
-
-  .product-col {
-    width: 40%;
-  }
-
-  .quantity-col,
-  .price-col {
-    width: 20%;
-  }
-
-  .total-col {
-    width: 15%;
-  }
-
-  .actions-col {
-    width: 5%;
-  }
-
-  .price-cell :global(input) {
-    background-color: var(--color-gray-100);
-  }
-
-  .line-total {
-    font-weight: 600;
-    color: var(--color-gray-900);
-    padding-top: 0.75rem;
-  }
-
-  .shipping-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .shipping-header .section-title {
-    margin: 0;
-    padding: 0;
-    border: none;
-  }
-
-  .checkbox-option {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: var(--color-gray-700);
-  }
-
-  .checkbox-option input[type="checkbox"] {
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-primary-600);
-  }
-
-  .address-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-
-  .totals-card {
-    grid-column: 2;
-  }
-
-  .totals-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .totals-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-  }
-
-  .totals-row:not(:last-child) {
-    border-bottom: 1px solid var(--color-gray-100);
-  }
-
-  .totals-row .label {
-    color: var(--color-gray-600);
-  }
-
-  .totals-row .value {
-    font-weight: 500;
-    color: var(--color-gray-900);
-  }
-
-  .totals-row .value.total {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--color-primary-600);
-  }
-
-  .tax-row {
-    align-items: flex-start;
-  }
-
-  .tax-input {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .tax-input label {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-  }
-
-  .actions-card :global(.section-title) {
-    display: none;
-  }
-
-  .actions-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .save-options {
-    display: flex;
+    grid-template-columns: 1fr 300px;
     gap: 1.5rem;
+    align-items: start;
   }
 
-  .radio-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    cursor: pointer;
-  }
-
-  .radio-option input[type="radio"] {
-    margin-top: 0.25rem;
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-primary-600);
-  }
-
-  .radio-label {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .radio-title {
-    font-weight: 500;
-    color: var(--color-gray-900);
-  }
-
-  .radio-description {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  @media (max-width: 1024px) {
+  @media (max-width: 768px) {
     .form-grid {
       grid-template-columns: 1fr;
     }
-
-    :global(.form-card.full-width) {
-      grid-column: 1;
-    }
-    
-    .totals-card {
-      grid-column: 1;
-    }
-
-    .form-row {
-      grid-template-columns: 1fr;
-    }
-
-    .address-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .actions-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .save-options {
-      flex-direction: column;
-    }
-
-    .action-buttons {
-      justify-content: flex-end;
-    }
   }
 
-  @media (max-width: 640px) {
-    .page-header {
-      flex-direction: column;
-      gap: 1rem;
-    }
+  .main-col, .side-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
 
-    .header-actions {
-      width: 100%;
-      justify-content: flex-end;
-    }
+  .side-col {
+    position: sticky;
+    top: 1rem;
+  }
 
-    .line-items-table {
-      font-size: 0.875rem;
-    }
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-gray-900, #111827);
+    margin: 0 0 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-gray-100, #f3f4f6);
+  }
 
-    .line-items-table th,
-    .line-items-table td {
-      padding: 0.25rem;
-    }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-gray-100, #f3f4f6);
+  }
 
-    .action-buttons {
-      flex-direction: column;
-    }
+  .section-header .section-title {
+    margin: 0;
+    padding: 0;
+    border: none;
+  }
 
-    .action-buttons :global(button) {
-      width: 100%;
-    }
+  .inline-spinner {
+    display: flex;
+    justify-content: center;
+    padding: 1rem;
+  }
 
-    .shipping-header {
-      flex-direction: column;
-      gap: 0.5rem;
-      align-items: flex-start;
-    }
+  .line-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .line-items-header {
+    display: grid;
+    grid-template-columns: 1fr 80px 100px 100px 36px;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-gray-500, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 0 0.25rem;
+  }
+
+  .line-item-row {
+    display: grid;
+    grid-template-columns: 1fr 80px 100px 100px 36px;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .col-product { flex: 1; }
+  .col-qty { width: 80px; }
+  .col-price { width: 100px; }
+
+  .line-total {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-gray-800, #1f2937);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .col-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .remove-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--color-gray-400, #9ca3af);
+    font-size: 0.875rem;
+    border-radius: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, background-color 0.15s;
+  }
+
+  .remove-btn:hover {
+    color: #dc2626;
+    background-color: #fee2e2;
+  }
+
+  .subtotal-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0 0;
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--color-gray-100, #f3f4f6);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-gray-900, #111827);
+  }
+
+  .address-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .summary-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    color: var(--color-gray-600, #4b5563);
+  }
+
+  .total-row {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--color-gray-900, #111827);
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-gray-100, #f3f4f6);
+  }
+
+  .form-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 </style>
