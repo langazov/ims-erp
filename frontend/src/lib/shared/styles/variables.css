@@ -184,6 +184,20 @@
   --z-popover: 1060;
   --z-tooltip: 1070;
   --z-toast: 1080;
+
+  /* ============================================
+     SIDEBAR TOKENS
+     ============================================ */
+  --sidebar-bg: #0f172a;
+  --sidebar-bg-gradient-start: #1e293b;
+  --sidebar-text: rgba(148, 163, 184, 1);   /* slate-400 */
+  --sidebar-text-hover: #ffffff;
+  --sidebar-active-bg: rgba(59, 130, 246, 0.15);
+  --sidebar-active-text: #60a5fa;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-width: 260px;
+  --sidebar-width-collapsed: 72px;
+  --header-height: 64px;
 }
 
 /* Dark mode variables */
