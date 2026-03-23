@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Button from '$lib/shared/components/forms/Button.svelte';
   import Input from '$lib/shared/components/forms/Input.svelte';
   import Select from '$lib/shared/components/forms/Select.svelte';
@@ -8,31 +9,17 @@
   import Badge from '$lib/shared/components/display/Badge.svelte';
   import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
-  import Modal from '$lib/shared/components/layout/Modal.svelte';
   import Pagination from '$lib/shared/components/data/Pagination.svelte';
-
-  interface Invoice {
-    id: string;
-    number: string;
-    clientId: string;
-    clientName: string;
-    issueDate: string;
-    dueDate: string;
-    status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
-    subtotal: number;
-    taxAmount: number;
-    total: number;
-    paidAmount: number;
-    balanceDue: number;
-    lineItems: {
-      description: string;
-      quantity: number;
-      unitPrice: number;
-      total: number;
-    }[];
-    notes: string;
-    createdAt: string;
-  }
+  import ConfirmModal from '$lib/shared/components/layout/ConfirmModal.svelte';
+  import EmptyState from '$lib/shared/components/display/EmptyState.svelte';
+  import {
+    getInvoices,
+    deleteInvoice,
+    getInvoiceStats,
+    type Invoice,
+    type InvoiceFilter
+  } from '$lib/shared/api/invoices';
+  import { toast } from '$lib/shared/stores/toast';
 
   let invoices: Invoice[] = [];
   let loading = true;
@@ -43,8 +30,20 @@
   let totalPages = 1;
   let totalItems = 0;
   let pageSize = 10;
-  let showCreateModal = false;
-  let deleteInvoiceId: string | null = null;
+
+  let stats: {
+    total: number;
+    draft: number;
+    sent: number;
+    paid: number;
+    overdue: number;
+    totalAmount: string;
+    paidAmount: string;
+  } | null = null;
+
+  let deleteTarget: Invoice | null = null;
+  let deleteModalOpen = false;
+  let deleting = false;
 
   const statusOptions = [
     { value: '', label: 'All Statuses' },
@@ -62,7 +61,6 @@
     { key: 'dueDate', label: 'Due Date', sortable: true },
     { key: 'total', label: 'Total', sortable: true },
     { key: 'status', label: 'Status', sortable: true },
-    { key: 'balance', label: 'Balance', sortable: true },
     { key: 'actions', label: 'Actions', sortable: false }
   ];
 
@@ -77,14 +75,13 @@
     }
   }
 
-  function formatCurrency(value: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(value);
+  function formatCurrency(value: string | number): string {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(isNaN(num) ? 0 : num);
   }
 
   function formatDate(date: string): string {
+    if (!date) return '—';
     return new Date(date).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -92,104 +89,32 @@
     });
   }
 
-  function isOverdue(dueDate: string, status: string): boolean {
-    if (status === 'paid' || status === 'cancelled') return false;
-    return new Date(dueDate) < new Date();
-  }
-
   async function loadInvoices() {
     loading = true;
     error = null;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      invoices = [
-        {
-          id: '1',
-          number: 'INV-2024-001',
-          clientId: '1',
-          clientName: 'Acme Corporation',
-          issueDate: '2024-01-15',
-          dueDate: '2024-02-15',
-          status: 'paid',
-          subtotal: 5000.00,
-          taxAmount: 400.00,
-          total: 5400.00,
-          paidAmount: 5400.00,
-          balanceDue: 0,
-          lineItems: [
-            { description: 'Consulting Services', quantity: 40, unitPrice: 125.00, total: 5000.00 }
-          ],
-          notes: 'Payment received via bank transfer',
-          createdAt: '2024-01-15T10:30:00Z'
-        },
-        {
-          id: '2',
-          number: 'INV-2024-002',
-          clientId: '2',
-          clientName: 'TechStart Inc',
-          issueDate: '2024-01-20',
-          dueDate: '2024-02-20',
-          status: 'sent',
-          subtotal: 3500.00,
-          taxAmount: 280.00,
-          total: 3780.00,
-          paidAmount: 0,
-          balanceDue: 3780.00,
-          lineItems: [
-            { description: 'Software Development', quantity: 20, unitPrice: 175.00, total: 3500.00 }
-          ],
-          notes: '',
-          createdAt: '2024-01-20T14:00:00Z'
-        },
-        {
-          id: '3',
-          number: 'INV-2024-003',
-          clientId: '3',
-          clientName: 'Global Solutions LLC',
-          issueDate: '2024-01-05',
-          dueDate: '2024-02-05',
-          status: 'overdue',
-          subtotal: 8200.00,
-          taxAmount: 656.00,
-          total: 8856.00,
-          paidAmount: 2000.00,
-          balanceDue: 6856.00,
-          lineItems: [
-            { description: 'Project Management', quantity: 60, unitPrice: 100.00, total: 6000.00 },
-            { description: 'Training Sessions', quantity: 8, unitPrice: 275.00, total: 2200.00 }
-          ],
-          notes: 'Partial payment received',
-          createdAt: '2024-01-05T09:00:00Z'
-        },
-        {
-          id: '4',
-          number: 'INV-2024-004',
-          clientId: '1',
-          clientName: 'Acme Corporation',
-          issueDate: '2024-01-25',
-          dueDate: '2024-02-25',
-          status: 'draft',
-          subtotal: 1200.00,
-          taxAmount: 96.00,
-          total: 1296.00,
-          paidAmount: 0,
-          balanceDue: 1296.00,
-          lineItems: [
-            { description: 'Maintenance Services', quantity: 4, unitPrice: 300.00, total: 1200.00 }
-          ],
-          notes: 'Draft - awaiting approval',
-          createdAt: '2024-01-25T11:30:00Z'
-        }
-      ];
-      
-      totalItems = invoices.length;
-      totalPages = Math.ceil(totalItems / pageSize);
+      const filter: InvoiceFilter = {
+        page: currentPage,
+        pageSize,
+        search: searchQuery || undefined,
+        status: statusFilter ? (statusFilter as any) : undefined
+      };
+      const res = await getInvoices(filter);
+      invoices = res.data;
+      totalItems = res.total;
+      totalPages = res.totalPages;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load invoices';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadStats() {
+    try {
+      stats = await getInvoiceStats();
+    } catch {
+      // non-fatal — summary bar simply won't show
     }
   }
 
@@ -199,29 +124,33 @@
   }
 
   function handleRowClick(invoice: Invoice) {
-    window.location.href = `/invoices/${invoice.id}`;
+    goto(`/invoices/${invoice.id}`);
   }
 
   function handleEdit(invoice: Invoice, event: Event) {
     event.stopPropagation();
-    window.location.href = `/invoices/${invoice.id}/edit`;
+    goto(`/invoices/${invoice.id}/edit`);
   }
 
-  async function handleDelete(invoice: Invoice, event: Event) {
+  function handleDeleteClick(invoice: Invoice, event: Event) {
     event.stopPropagation();
-    deleteInvoiceId = invoice.id;
+    deleteTarget = invoice;
+    deleteModalOpen = true;
   }
 
   async function confirmDelete() {
-    if (!deleteInvoiceId) return;
-    
+    if (!deleteTarget) return;
+    deleting = true;
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      invoices = invoices.filter(i => i.id !== deleteInvoiceId);
-      totalItems = invoices.length;
-      deleteInvoiceId = null;
+      await deleteInvoice(deleteTarget.id);
+      toast.success(`Invoice ${deleteTarget.invoiceNumber} deleted`);
+      deleteTarget = null;
+      deleteModalOpen = false;
+      await Promise.all([loadInvoices(), loadStats()]);
     } catch (err) {
-      error = 'Failed to delete invoice';
+      toast.error('Failed to delete invoice');
+    } finally {
+      deleting = false;
     }
   }
 
@@ -230,8 +159,14 @@
     loadInvoices();
   }
 
+  $: outstandingCount = stats ? stats.draft + stats.sent + stats.overdue : 0;
+  $: outstandingAmount = stats
+    ? parseFloat(stats.totalAmount || '0') - parseFloat(stats.paidAmount || '0')
+    : 0;
+
   onMount(() => {
     loadInvoices();
+    loadStats();
   });
 </script>
 
@@ -246,16 +181,42 @@
       <p class="page-description">Manage invoices and track payments</p>
     </div>
     <div class="header-actions">
-      <Button variant="primary" on:click={() => showCreateModal = true}>
-        Create Invoice
+      <Button variant="primary" on:click={() => goto('/invoices/new')}>
+        + Create Invoice
       </Button>
     </div>
   </div>
 
   {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => error = null}>
+    <Alert variant="error" dismissible on:dismiss={() => (error = null)}>
       {error}
     </Alert>
+  {/if}
+
+  <!-- Summary bar -->
+  {#if stats}
+    <div class="summary-bar">
+      <div class="summary-card summary-outstanding">
+        <div class="summary-label">Outstanding</div>
+        <div class="summary-value">{formatCurrency(outstandingAmount)}</div>
+        <div class="summary-count">{outstandingCount} invoice{outstandingCount !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="summary-card summary-paid">
+        <div class="summary-label">Paid</div>
+        <div class="summary-value">{formatCurrency(stats.paidAmount)}</div>
+        <div class="summary-count">{stats.paid} invoice{stats.paid !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="summary-card summary-overdue">
+        <div class="summary-label">Overdue</div>
+        <div class="summary-value">{stats.overdue}</div>
+        <div class="summary-count">invoice{stats.overdue !== 1 ? 's' : ''} past due</div>
+      </div>
+      <div class="summary-card summary-total">
+        <div class="summary-label">Total Invoiced</div>
+        <div class="summary-value">{formatCurrency(stats.totalAmount)}</div>
+        <div class="summary-count">{stats.total} invoice{stats.total !== 1 ? 's' : ''}</div>
+      </div>
+    </div>
   {/if}
 
   <Card>
@@ -266,7 +227,7 @@
             id="search"
             label="Search"
             type="search"
-            placeholder="Search invoices..."
+            placeholder="Search by number, client..."
             bind:value={searchQuery}
             on:keydown={(e) => e.key === 'Enter' && handleSearch()}
           />
@@ -280,10 +241,8 @@
             on:change={() => handleSearch()}
           />
         </div>
-        <div class="filter-item">
-          <Button variant="secondary" on:click={handleSearch}>
-            Search
-          </Button>
+        <div class="filter-actions">
+          <Button variant="secondary" on:click={handleSearch}>Search</Button>
         </div>
       </div>
     </div>
@@ -294,28 +253,29 @@
         <p>Loading invoices...</p>
       </div>
     {:else if invoices.length === 0}
-      <div class="empty-container">
-        <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
-        </svg>
-        <p class="text-gray-500 mb-4">No invoices found</p>
-        <Button variant="primary" on:click={() => showCreateModal = true}>
-          Create Your First Invoice
-        </Button>
-      </div>
+      <EmptyState
+        icon="🧾"
+        title="No invoices found"
+        description={searchQuery || statusFilter
+          ? 'No invoices match your current filters. Try adjusting your search.'
+          : 'Get started by creating your first invoice.'}
+        actionLabel={!searchQuery && !statusFilter ? 'Create Invoice' : ''}
+        on:action={() => goto('/invoices/new')}
+      />
     {:else}
       <Table {columns}>
         <tbody>
           {#each invoices as invoice}
-            <tr on:click={() => handleRowClick(invoice)} class="clickable-row">
-              <td class="font-medium">{invoice.number}</td>
+            <tr
+              on:click={() => handleRowClick(invoice)}
+              class="clickable-row"
+              class:overdue-row={invoice.status === 'overdue'}
+            >
+              <td class="font-medium invoice-number">{invoice.invoiceNumber}</td>
               <td>{invoice.clientName}</td>
-              <td>{formatDate(invoice.issueDate)}</td>
-              <td class={isOverdue(invoice.dueDate, invoice.status) ? 'text-red-600 font-medium' : ''}>
+              <td>{formatDate(invoice.createdAt)}</td>
+              <td class:text-red-600={invoice.status === 'overdue'} class:font-medium={invoice.status === 'overdue'}>
                 {formatDate(invoice.dueDate)}
-                {#if isOverdue(invoice.dueDate, invoice.status)}
-                  <span class="text-xs ml-1">(Overdue)</span>
-                {/if}
               </td>
               <td class="font-medium">{formatCurrency(invoice.total)}</td>
               <td>
@@ -323,15 +283,17 @@
                   {invoice.status}
                 </Badge>
               </td>
-              <td class={invoice.balanceDue > 0 ? 'text-red-600 font-medium' : 'text-green-600'}>
-                {formatCurrency(invoice.balanceDue)}
-              </td>
               <td>
-                <div class="actions-cell">
-                  <Button variant="ghost" size="sm" on:click={(e) => handleEdit(invoice, e)}>
-                    Edit
+                <div class="actions-cell" role="presentation" on:click|stopPropagation>
+                  <Button variant="ghost" size="sm" on:click={() => goto(`/invoices/${invoice.id}`)}>
+                    View
                   </Button>
-                  <Button variant="ghost" size="sm" on:click={(e) => handleDelete(invoice, e)}>
+                  {#if invoice.status === 'draft'}
+                    <Button variant="ghost" size="sm" on:click={(e) => handleEdit(invoice, e)}>
+                      Edit
+                    </Button>
+                  {/if}
+                  <Button variant="ghost" size="sm" on:click={(e) => handleDeleteClick(invoice, e)}>
                     Delete
                   </Button>
                 </div>
@@ -341,46 +303,31 @@
         </tbody>
       </Table>
 
-      <Pagination
-        {currentPage}
-        {totalPages}
-        {totalItems}
-        {pageSize}
-        on:pageChange={(e) => handlePageChange(e.detail)}
-      />
+      <div class="pagination-wrapper">
+        <Pagination
+          {currentPage}
+          {totalPages}
+          {totalItems}
+          {pageSize}
+          on:pageChange={(e) => handlePageChange(e.detail)}
+        />
+      </div>
     {/if}
   </Card>
 </div>
 
-<Modal
-  bind:open={showCreateModal}
-  title="Create Invoice"
-  size="lg"
->
-  <p class="text-gray-600">Invoice creation form will be implemented here.</p>
-  
-  <svelte:fragment slot="footer" let:close>
-    <Button variant="secondary" on:click={close}>Cancel</Button>
-    <Button variant="primary" on:click={() => {
-      showCreateModal = false;
-    }}>Create</Button>
-  </svelte:fragment>
-</Modal>
-
-{#if deleteInvoiceId}
-  <Modal
-    open={true}
-    title="Delete Invoice"
-    size="sm"
-  >
-    <p>Are you sure you want to delete this invoice? This action cannot be undone.</p>
-    
-    <svelte:fragment slot="footer" let:close>
-      <Button variant="secondary" on:click={() => { close(); deleteInvoiceId = null; }}>Cancel</Button>
-      <Button variant="danger" on:click={confirmDelete}>Delete</Button>
-    </svelte:fragment>
-  </Modal>
-{/if}
+<ConfirmModal
+  bind:open={deleteModalOpen}
+  title="Delete Invoice"
+  message={deleteTarget
+    ? `Are you sure you want to delete invoice ${deleteTarget.invoiceNumber}? This action cannot be undone.`
+    : ''}
+  confirmLabel="Delete"
+  variant="danger"
+  loading={deleting}
+  on:confirm={confirmDelete}
+  on:cancel={() => { deleteModalOpen = false; deleteTarget = null; }}
+/>
 
 <style>
   .page-container {
@@ -399,15 +346,66 @@
   .page-title {
     font-size: 1.875rem;
     font-weight: 700;
-    color: var(--color-gray-900);
+    color: var(--color-gray-900, #111827);
     margin: 0;
   }
 
   .page-description {
-    color: var(--color-gray-500);
+    color: var(--color-gray-500, #6b7280);
     margin-top: 0.25rem;
+    margin-bottom: 0;
   }
 
+  /* Summary bar */
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  @media (max-width: 768px) {
+    .summary-bar {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  .summary-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-left: 4px solid transparent;
+  }
+
+  .summary-outstanding { border-left-color: #3b82f6; }
+  .summary-paid        { border-left-color: #10b981; }
+  .summary-overdue     { border-left-color: #ef4444; }
+  .summary-total       { border-left-color: #8b5cf6; }
+
+  .summary-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    margin-bottom: 0.25rem;
+  }
+
+  .summary-value {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+  }
+
+  .summary-count {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-top: 0.2rem;
+  }
+
+  /* Filters */
   .filters {
     margin-bottom: 1rem;
   }
@@ -416,39 +414,65 @@
     display: flex;
     gap: 0.75rem;
     flex-wrap: wrap;
+    align-items: flex-end;
   }
 
   .filter-item {
     flex: 1;
-    min-width: 200px;
+    min-width: 180px;
   }
 
   .search-filter {
     flex: 2;
-    min-width: 300px;
+    min-width: 280px;
   }
 
-  .loading-container,
-  .empty-container {
+  .filter-actions {
+    padding-bottom: 0.125rem;
+  }
+
+  /* Loading / empty */
+  .loading-container {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 3rem;
     gap: 1rem;
-    color: var(--color-gray-500);
+    color: #6b7280;
   }
 
+  /* Table rows */
   .clickable-row {
     cursor: pointer;
+    transition: background-color 0.1s;
   }
 
   .clickable-row:hover {
-    background-color: var(--color-gray-50);
+    background-color: #f9fafb;
+  }
+
+  .overdue-row {
+    background-color: #fff5f5 !important;
+  }
+
+  .overdue-row:hover {
+    background-color: #fee2e2 !important;
+  }
+
+  .invoice-number {
+    font-family: monospace;
+    font-size: 0.875rem;
   }
 
   .actions-cell {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.25rem;
+  }
+
+  .pagination-wrapper {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
   }
 </style>

@@ -4,195 +4,168 @@
   import Button from '$lib/shared/components/forms/Button.svelte';
   import Input from '$lib/shared/components/forms/Input.svelte';
   import Select from '$lib/shared/components/forms/Select.svelte';
-  import DatePicker from '$lib/shared/components/forms/DatePicker.svelte';
   import Textarea from '$lib/shared/components/forms/Textarea.svelte';
   import Card from '$lib/shared/components/layout/Card.svelte';
   import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
-  import Badge from '$lib/shared/components/display/Badge.svelte';
-  import { createInvoice, type InvoiceItem } from '$lib/shared/api/invoices';
+  import { createInvoice } from '$lib/shared/api/invoices';
   import { getClients, type Client } from '$lib/shared/api/clients';
+  import { toast } from '$lib/shared/stores/toast';
 
-  // Form state
-  let selectedClientId = '';
-  let invoiceNumber = '';
-  let issueDate = new Date().toISOString().split('T')[0];
-  let dueDate = '';
-  let notes = '';
-  let taxRate = '8';
-  let saveAsDraft = true;
-
-  // Line items
-  let lineItems: Array<{
-    id: string;
-    description: string;
-    quantity: string;
-    unitPrice: string;
-  }> = [
-    { id: crypto.randomUUID(), description: '', quantity: '1', unitPrice: '' }
-  ];
-
-  // Data loading
+  // ── Client selector ────────────────────────────────────────────────────────
   let clients: Client[] = [];
-  let loadingClients = true;
+  let clientOptions: { value: string; label: string }[] = [];
+  let loadingClients = false;
+
+  // ── Form state ─────────────────────────────────────────────────────────────
+  let clientId = '';
+  let invoiceType = 'standard';
+  let issueDate = new Date().toISOString().split('T')[0];
+  let paymentTerm = 'net30';
+  let dueDate = '';
+  let currency = 'USD';
+  let notes = '';
+  let terms = '';
   let submitting = false;
-  let error: string | null = null;
   let errors: Record<string, string> = {};
 
-  // Computed values
-  $: subtotal = lineItems.reduce((sum, item) => {
-    const price = parseFloat(item.unitPrice) || 0;
-    const qty = parseInt(item.quantity) || 0;
-    return sum + (qty * price);
-  }, 0);
-
-  $: taxAmount = subtotal * ((parseFloat(taxRate) || 0) / 100);
-  $: total = subtotal + taxAmount;
-
-  $: clientOptions = clients.map(client => ({
-    value: client.id,
-    label: `${client.name} (${client.email})`
-  }));
-
-  onMount(async () => {
-    await loadClients();
-    generateInvoiceNumber();
-    // Set default due date to 30 days from now
-    const thirtyDaysFromNow = new Date();
-    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-    dueDate = thirtyDaysFromNow.toISOString().split('T')[0];
-  });
-
-  async function loadClients() {
-    loadingClients = true;
-    try {
-      const response = await getClients();
-      clients = response.data;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load clients';
-    } finally {
-      loadingClients = false;
-    }
+  // ── Line items ─────────────────────────────────────────────────────────────
+  interface LineItem {
+    id: string;
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    discount: number;
+    taxRate: number;
   }
 
-  function generateInvoiceNumber() {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    invoiceNumber = `INV-${year}-${month}-${random}`;
+  let lineItems: LineItem[] = [newLineItem()];
+
+  function newLineItem(): LineItem {
+    return {
+      id: crypto.randomUUID(),
+      description: '',
+      quantity: 1,
+      unitPrice: 0,
+      discount: 0,
+      taxRate: 0
+    };
   }
 
   function addLineItem() {
-    lineItems = [
-      ...lineItems,
-      { id: crypto.randomUUID(), description: '', quantity: '1', unitPrice: '' }
-    ];
+    lineItems = [...lineItems, newLineItem()];
   }
 
-  function removeLineItem(index: number) {
-    if (lineItems.length > 1) {
-      lineItems = lineItems.filter((_, i) => i !== index);
+  function removeLineItem(id: string) {
+    if (lineItems.length === 1) return;
+    lineItems = lineItems.filter((l) => l.id !== id);
+  }
+
+  function lineTotal(item: LineItem): number {
+    const gross = item.quantity * item.unitPrice;
+    const afterDiscount = gross * (1 - item.discount / 100);
+    return afterDiscount * (1 + item.taxRate / 100);
+  }
+
+  $: subtotal = lineItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  $: discountTotal = lineItems.reduce(
+    (s, i) => s + i.quantity * i.unitPrice * (i.discount / 100),
+    0
+  );
+  $: taxTotal = lineItems.reduce((s, i) => {
+    const afterDiscount = i.quantity * i.unitPrice * (1 - i.discount / 100);
+    return s + afterDiscount * (i.taxRate / 100);
+  }, 0);
+  $: grandTotal = subtotal - discountTotal + taxTotal;
+
+  // ── Payment terms → due date ───────────────────────────────────────────────
+  const termDays: Record<string, number> = {
+    immediate: 0,
+    net15: 15,
+    net30: 30,
+    net45: 45,
+    net60: 60
+  };
+
+  $: {
+    if (issueDate && paymentTerm) {
+      const d = new Date(issueDate);
+      d.setDate(d.getDate() + (termDays[paymentTerm] ?? 30));
+      dueDate = d.toISOString().split('T')[0];
     }
   }
 
-  function updateLineItem(index: number, field: keyof typeof lineItems[0], value: string | number) {
-    lineItems = lineItems.map((item, i) => {
-      if (i === index) {
-        return { ...item, [field]: value };
-      }
-      return item;
-    });
+  const invoiceTypeOptions = [
+    { value: 'standard', label: 'Standard Invoice' },
+    { value: 'credit_note', label: 'Credit Note' },
+    { value: 'debit_note', label: 'Debit Note' },
+    { value: 'recurring', label: 'Recurring Invoice' }
+  ];
+
+  const paymentTermOptions = [
+    { value: 'immediate', label: 'Due on Receipt' },
+    { value: 'net15', label: 'Net 15' },
+    { value: 'net30', label: 'Net 30' },
+    { value: 'net45', label: 'Net 45' },
+    { value: 'net60', label: 'Net 60' }
+  ];
+
+  const currencyOptions = [
+    { value: 'USD', label: 'USD — US Dollar' },
+    { value: 'EUR', label: 'EUR — Euro' },
+    { value: 'GBP', label: 'GBP — British Pound' }
+  ];
+
+  function formatCurrency(value: number): string {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
   }
 
-  function getLineTotal(item: typeof lineItems[0]): number {
-    const price = parseFloat(item.unitPrice) || 0;
-    const qty = parseInt(item.quantity) || 0;
-    return qty * price;
-  }
-
-  function validateForm(): boolean {
+  // ── Validation ─────────────────────────────────────────────────────────────
+  function validate(): boolean {
     errors = {};
-
-    if (!selectedClientId) {
-      errors.clientId = 'Please select a client';
-    }
-
-    if (!invoiceNumber.trim()) {
-      errors.invoiceNumber = 'Invoice number is required';
-    }
-
-    if (!dueDate) {
-      errors.dueDate = 'Due date is required';
-    } else if (new Date(dueDate) < new Date(issueDate)) {
-      errors.dueDate = 'Due date must be after issue date';
-    }
-
-    // Validate line items
-    let hasLineItemErrors = false;
-    lineItems.forEach((item, index) => {
-      if (!item.description.trim()) {
-        errors[`item_${index}_description`] = 'Description is required';
-        hasLineItemErrors = true;
-      }
-      if (!item.quantity || parseInt(item.quantity) <= 0) {
-        errors[`item_${index}_quantity`] = 'Quantity must be greater than 0';
-        hasLineItemErrors = true;
-      }
-      if (!item.unitPrice || parseFloat(item.unitPrice) <= 0) {
-        errors[`item_${index}_price`] = 'Price must be greater than 0';
-        hasLineItemErrors = true;
-      }
-    });
-
-    if (hasLineItemErrors) {
-      errors.lineItems = 'Please fix line item errors';
-    }
-
+    if (!clientId) errors.clientId = 'Client is required';
+    const validItems = lineItems.filter((i) => i.description.trim() && i.quantity > 0);
+    if (validItems.length === 0)
+      errors.lineItems = 'At least one line item with a description and quantity is required';
     return Object.keys(errors).length === 0;
   }
 
+  // ── Submit ─────────────────────────────────────────────────────────────────
   async function handleSubmit() {
-    if (!validateForm()) {
-      return;
-    }
-
-    const items: InvoiceItem[] = lineItems.map(item => ({
-      description: item.description,
-      quantity: parseInt(item.quantity) || 1,
-      unitPrice: item.unitPrice,
-      total: getLineTotal(item).toFixed(2)
-    }));
-
-    const data = {
-      clientId: selectedClientId,
-      items,
-      dueDate,
-      notes: notes || undefined
-    };
-
+    if (!validate()) return;
     submitting = true;
-    error = null;
-
     try {
-      const invoice = await createInvoice(data);
+      const items = lineItems
+        .filter((i) => i.description.trim() && i.quantity > 0)
+        .map((i) => ({
+          description: i.description,
+          quantity: i.quantity,
+          unitPrice: String(i.unitPrice),
+          total: String(lineTotal(i).toFixed(2))
+        }));
+
+      const invoice = await createInvoice({ clientId, items, dueDate, notes });
+      toast.success('Invoice created successfully');
       goto(`/invoices/${invoice.id}`);
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to create invoice';
+      toast.error(err instanceof Error ? err.message : 'Failed to create invoice');
+    } finally {
       submitting = false;
     }
   }
 
-  function handleCancel() {
-    goto('/invoices');
-  }
-
-  function formatCurrency(value: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(value);
-  }
+  onMount(async () => {
+    loadingClients = true;
+    try {
+      const res = await getClients({ pageSize: 200 });
+      clients = res.data;
+      clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
+    } catch {
+      toast.error('Could not load clients');
+    } finally {
+      loadingClients = false;
+    }
+  });
 </script>
 
 <svelte:head>
@@ -201,268 +174,246 @@
 
 <div class="page-container">
   <div class="page-header">
-    <div class="header-content">
+    <div>
       <h1 class="page-title">New Invoice</h1>
-      <p class="page-description">Create a new invoice for your client</p>
+      <p class="page-description">Create a new invoice for a client</p>
     </div>
     <div class="header-actions">
-      <Button variant="secondary" on:click={handleCancel} disabled={submitting}>
-        Cancel
+      <Button variant="secondary" on:click={() => goto('/invoices')}>Cancel</Button>
+      <Button variant="primary" loading={submitting} on:click={handleSubmit}>
+        Create Invoice
       </Button>
     </div>
   </div>
 
-  {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => error = null} class="mb-4">
-      {error}
-    </Alert>
+  {#if errors.lineItems}
+    <Alert variant="error">{errors.lineItems}</Alert>
   {/if}
 
-  {#if loadingClients}
-    <div class="loading-container">
-      <Spinner size="lg" />
-      <p>Loading...</p>
-    </div>
-  {:else}
-    <form on:submit|preventDefault={handleSubmit}>
-      <div class="form-grid">
-        <!-- Client Selection -->
-        <Card class="form-card">
-          <h2 class="section-title">Client Information</h2>
-          <div class="form-group">
-            <Select
-              id="client"
-              label="Client"
-              options={clientOptions}
-              bind:value={selectedClientId}
-              placeholder="Select a client"
-              required
-              error={errors.clientId}
-            />
-            {#if selectedClientId}
-              {@const selectedClient = clients.find(c => c.id === selectedClientId)}
-              {#if selectedClient}
-                <div class="client-preview">
-                  <Badge variant="blue" size="sm">{selectedClient.code}</Badge>
-                  <span class="client-email">{selectedClient.email}</span>
-                  {#if selectedClient.phone}
-                    <span class="client-phone">{selectedClient.phone}</span>
-                  {/if}
-                </div>
-              {/if}
+  <div class="form-grid">
+    <!-- Left column -->
+    <div class="form-left">
+      <!-- Client & meta -->
+      <Card>
+        <h2 class="section-title">Invoice Details</h2>
+        <div class="fields-grid">
+          <div class="field-full">
+            {#if loadingClients}
+              <div class="flex items-center gap-2 text-sm text-gray-500">
+                <Spinner size="sm" /> Loading clients…
+              </div>
+            {:else}
+              <Select
+                id="clientId"
+                label="Client"
+                options={clientOptions}
+                bind:value={clientId}
+                placeholder="Select a client"
+                required
+                error={errors.clientId}
+              />
             {/if}
           </div>
-        </Card>
 
-        <!-- Invoice Details -->
-        <Card class="form-card">
-          <h2 class="section-title">Invoice Details</h2>
-          <div class="form-row">
-            <div class="form-group">
-              <Input
-                id="invoiceNumber"
-                label="Invoice Number"
-                type="text"
-                bind:value={invoiceNumber}
-                required
-                error={errors.invoiceNumber}
-                readonly
-              />
-            </div>
-            <div class="form-group">
-              <DatePicker
-                id="issueDate"
-                label="Issue Date"
-                bind:value={issueDate}
-                required
-                disabled
-              />
-            </div>
-            <div class="form-group">
-              <DatePicker
-                id="dueDate"
-                label="Due Date"
-                bind:value={dueDate}
-                required
-                error={errors.dueDate}
-                min={issueDate}
-              />
-            </div>
-          </div>
-        </Card>
+          <Select
+            id="invoiceType"
+            label="Invoice Type"
+            options={invoiceTypeOptions}
+            bind:value={invoiceType}
+          />
 
-        <!-- Line Items -->
-        <Card class="form-card full-width">
-          <div class="line-items-header">
-            <h2 class="section-title">Line Items</h2>
-            <Button variant="secondary" size="sm" on:click={addLineItem} type="button">
-              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Item
-            </Button>
-          </div>
+          <Select
+            id="currency"
+            label="Currency"
+            options={currencyOptions}
+            bind:value={currency}
+          />
 
-          {#if errors.lineItems}
-            <Alert variant="error" class="mb-4">{errors.lineItems}</Alert>
-          {/if}
+          <Input
+            id="issueDate"
+            label="Issue Date"
+            type="date"
+            bind:value={issueDate}
+            required
+          />
 
-          <div class="line-items-table">
-            <table>
-              <thead>
-                <tr>
-                  <th class="description-col">Description</th>
-                  <th class="quantity-col">Quantity</th>
-                  <th class="price-col">Unit Price</th>
-                  <th class="total-col">Total</th>
-                  <th class="actions-col"></th>
+          <Select
+            id="paymentTerm"
+            label="Payment Terms"
+            options={paymentTermOptions}
+            bind:value={paymentTerm}
+          />
+
+          <Input
+            id="dueDate"
+            label="Due Date"
+            type="date"
+            bind:value={dueDate}
+            helpText="Auto-calculated from payment terms"
+          />
+        </div>
+      </Card>
+
+      <!-- Line items -->
+      <Card>
+        <div class="section-header">
+          <h2 class="section-title">Line Items</h2>
+          <Button variant="secondary" size="sm" on:click={addLineItem}>+ Add Item</Button>
+        </div>
+
+        <div class="line-items-table-wrapper">
+          <table class="line-items-table">
+            <thead>
+              <tr>
+                <th class="col-desc">Description</th>
+                <th class="col-qty">Qty</th>
+                <th class="col-price">Unit Price</th>
+                <th class="col-disc">Disc %</th>
+                <th class="col-tax">Tax %</th>
+                <th class="col-total">Total</th>
+                <th class="col-action"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each lineItems as item (item.id)}
+                <tr class="line-item-row">
+                  <td class="col-desc">
+                    <input
+                      class="cell-input"
+                      type="text"
+                      placeholder="Item description"
+                      bind:value={item.description}
+                    />
+                  </td>
+                  <td class="col-qty">
+                    <input
+                      class="cell-input text-right"
+                      type="number"
+                      min="0"
+                      step="1"
+                      bind:value={item.quantity}
+                    />
+                  </td>
+                  <td class="col-price">
+                    <input
+                      class="cell-input text-right"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      bind:value={item.unitPrice}
+                    />
+                  </td>
+                  <td class="col-disc">
+                    <input
+                      class="cell-input text-right"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      bind:value={item.discount}
+                    />
+                  </td>
+                  <td class="col-tax">
+                    <input
+                      class="cell-input text-right"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      bind:value={item.taxRate}
+                    />
+                  </td>
+                  <td class="col-total text-right font-medium">
+                    {formatCurrency(lineTotal(item))}
+                  </td>
+                  <td class="col-action">
+                    <button
+                      type="button"
+                      class="remove-btn"
+                      disabled={lineItems.length === 1}
+                      on:click={() => removeLineItem(item.id)}
+                      aria-label="Remove line item"
+                    >
+                      ×
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {#each lineItems as item, index (item.id)}
-                  <tr>
-                    <td>
-                      <Input
-                        id="item-desc-{index}"
-                        label=""
-                        type="text"
-                        placeholder="Item description"
-                        bind:value={item.description}
-                        error={errors[`item_${index}_description`]}
-                      />
-                    </td>
-                    <td>
-                      <Input
-                        id="item-qty-{index}"
-                        label=""
-                        type="number"
-                        bind:value={item.quantity}
-                        min="1"
-                        step="1"
-                        error={errors[`item_${index}_quantity`]}
-                      />
-                    </td>
-                    <td>
-                      <Input
-                        id="item-price-{index}"
-                        label=""
-                        type="number"
-                        placeholder="0.00"
-                        bind:value={item.unitPrice}
-                        min="0"
-                        step="0.01"
-                        error={errors[`item_${index}_price`]}
-                      />
-                    </td>
-                    <td class="line-total">
-                      {formatCurrency(getLineTotal(item))}
-                    </td>
-                    <td>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        on:click={() => removeLineItem(index)}
-                        disabled={lineItems.length === 1}
-                        type="button"
-                      >
-                        <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </Button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+              {/each}
+            </tbody>
+          </table>
+        </div>
 
-        <!-- Totals -->
-        <Card class="form-card totals-card">
-          <h2 class="section-title">Totals</h2>
-          <div class="totals-section">
-            <div class="totals-row">
-              <span class="label">Subtotal</span>
-              <span class="value">{formatCurrency(subtotal)}</span>
-            </div>
-            <div class="totals-row tax-row">
-              <div class="tax-input">
-                <label for="taxRate">Tax Rate (%)</label>
-                <Input
-                  id="taxRate"
-                  label=""
-                  type="number"
-                  bind:value={taxRate}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                />
-              </div>
-              <span class="value">{formatCurrency(taxAmount)}</span>
-            </div>
-            <div class="totals-row total-row">
-              <span class="label">Total</span>
-              <span class="value total">{formatCurrency(total)}</span>
-            </div>
-          </div>
-        </Card>
+        <!-- Summary -->
+        <div class="totals-section">
+          <div class="totals-grid">
+            <span class="totals-label">Subtotal</span>
+            <span class="totals-value">{formatCurrency(subtotal)}</span>
 
-        <!-- Notes -->
-        <Card class="form-card">
-          <h2 class="section-title">Additional Information</h2>
+            {#if discountTotal > 0}
+              <span class="totals-label text-green-600">Discount</span>
+              <span class="totals-value text-green-600">−{formatCurrency(discountTotal)}</span>
+            {/if}
+
+            <span class="totals-label">Tax</span>
+            <span class="totals-value">{formatCurrency(taxTotal)}</span>
+
+            <span class="totals-label grand-label">Total</span>
+            <span class="totals-value grand-value">{formatCurrency(grandTotal)}</span>
+          </div>
+        </div>
+      </Card>
+    </div>
+
+    <!-- Right column: notes & terms -->
+    <div class="form-right">
+      <Card>
+        <h2 class="section-title">Notes &amp; Terms</h2>
+        <div class="fields-stack">
           <Textarea
             id="notes"
             label="Notes"
+            placeholder="Additional notes visible to the client…"
             bind:value={notes}
-            placeholder="Add any additional notes or terms..."
             rows={4}
           />
-        </Card>
+          <Textarea
+            id="terms"
+            label="Terms &amp; Conditions"
+            placeholder="Payment terms, late fees, etc…"
+            bind:value={terms}
+            rows={4}
+          />
+        </div>
+      </Card>
 
-        <!-- Actions -->
-        <Card class="form-card full-width actions-card">
-          <div class="actions-row">
-            <div class="save-options">
-              <label class="radio-option">
-                <input
-                  type="radio"
-                  name="saveOption"
-                  value="draft"
-                  bind:group={saveAsDraft}
-                  checked={saveAsDraft}
-                />
-                <span class="radio-label">
-                  <span class="radio-title">Save as Draft</span>
-                  <span class="radio-description">Invoice will be saved but not sent</span>
-                </span>
-              </label>
-              <label class="radio-option">
-                <input
-                  type="radio"
-                  name="saveOption"
-                  value="sent"
-                  bind:group={saveAsDraft}
-                  checked={!saveAsDraft}
-                />
-                <span class="radio-label">
-                  <span class="radio-title">Send Immediately</span>
-                  <span class="radio-description">Invoice will be sent to the client</span>
-                </span>
-              </label>
-            </div>
-            <div class="action-buttons">
-              <Button variant="secondary" on:click={handleCancel} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button variant="primary" type="submit" loading={submitting}>
-                {submitting ? 'Creating...' : (saveAsDraft ? 'Save as Draft' : 'Create & Send')}
-              </Button>
-            </div>
+      <Card>
+        <h2 class="section-title">Summary</h2>
+        <div class="summary-list">
+          <div class="summary-row">
+            <span>Subtotal</span><span>{formatCurrency(subtotal)}</span>
           </div>
-        </Card>
-      </div>
-    </form>
-  {/if}
+          {#if discountTotal > 0}
+            <div class="summary-row text-green-700">
+              <span>Discount</span><span>−{formatCurrency(discountTotal)}</span>
+            </div>
+          {/if}
+          <div class="summary-row">
+            <span>Tax</span><span>{formatCurrency(taxTotal)}</span>
+          </div>
+          <div class="summary-row summary-total-row">
+            <span>Total ({currency})</span><span>{formatCurrency(grandTotal)}</span>
+          </div>
+        </div>
+      </Card>
+    </div>
+  </div>
+
+  <div class="bottom-actions">
+    <Button variant="secondary" on:click={() => goto('/invoices')}>Cancel</Button>
+    <Button variant="primary" loading={submitting} on:click={handleSubmit}>
+      Create Invoice
+    </Button>
+  </div>
 </div>
 
 <style>
@@ -480,310 +431,233 @@
   }
 
   .page-title {
-    font-size: 1.875rem;
+    font-size: 1.75rem;
     font-weight: 700;
-    color: var(--color-gray-900);
+    color: #111827;
     margin: 0;
   }
 
   .page-description {
-    color: var(--color-gray-500);
+    color: #6b7280;
     margin-top: 0.25rem;
+    margin-bottom: 0;
   }
 
   .header-actions {
     display: flex;
-    gap: 0.5rem;
-  }
-
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem;
-    gap: 1rem;
-    color: var(--color-gray-500);
+    gap: 0.75rem;
   }
 
   .form-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-  }
-
-  :global(.form-card) {
-    padding: 1.5rem;
-  }
-
-  :global(.form-card.full-width) {
-    grid-column: 1 / -1;
-  }
-
-  .section-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--color-gray-900);
-    margin: 0 0 1rem 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-gray-200);
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  .form-group:last-child {
-    margin-bottom: 0;
-  }
-
-  .form-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-
-  .client-preview {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background-color: var(--color-gray-50);
-    border-radius: 0.5rem;
-  }
-
-  .client-email {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-  }
-
-  .client-phone {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-  }
-
-  .line-items-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .line-items-header .section-title {
-    margin: 0;
-    padding: 0;
-    border: none;
-  }
-
-  .line-items-table {
-    overflow-x: auto;
-  }
-
-  .line-items-table table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .line-items-table th {
-    text-align: left;
-    padding: 0.75rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-gray-500);
-    border-bottom: 1px solid var(--color-gray-200);
-  }
-
-  .line-items-table td {
-    padding: 0.5rem;
-    vertical-align: top;
-  }
-
-  .description-col {
-    width: 40%;
-  }
-
-  .quantity-col,
-  .price-col {
-    width: 20%;
-  }
-
-  .total-col {
-    width: 15%;
-  }
-
-  .actions-col {
-    width: 5%;
-  }
-
-  .line-total {
-    font-weight: 600;
-    color: var(--color-gray-900);
-    padding-top: 0.75rem;
-  }
-
-  .totals-card {
-    grid-column: 2;
-  }
-
-  .totals-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .totals-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-  }
-
-  .totals-row:not(:last-child) {
-    border-bottom: 1px solid var(--color-gray-100);
-  }
-
-  .totals-row .label {
-    color: var(--color-gray-600);
-  }
-
-  .totals-row .value {
-    font-weight: 500;
-    color: var(--color-gray-900);
-  }
-
-  .totals-row .value.total {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--color-primary-600);
-  }
-
-  .tax-row {
-    align-items: flex-start;
-  }
-
-  .tax-input {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .tax-input label {
-    font-size: 0.875rem;
-    color: var(--color-gray-600);
-  }
-
-  .actions-card :global(.section-title) {
-    display: none;
-  }
-
-  .actions-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .save-options {
-    display: flex;
+    grid-template-columns: 1fr 320px;
     gap: 1.5rem;
+    align-items: start;
   }
 
-  .radio-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    cursor: pointer;
-  }
-
-  .radio-option input[type="radio"] {
-    margin-top: 0.25rem;
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-primary-600);
-  }
-
-  .radio-label {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .radio-title {
-    font-weight: 500;
-    color: var(--color-gray-900);
-  }
-
-  .radio-description {
-    font-size: 0.875rem;
-    color: var(--color-gray-500);
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  @media (max-width: 1024px) {
+  @media (max-width: 900px) {
     .form-grid {
       grid-template-columns: 1fr;
     }
-
-    :global(.form-card.full-width) {
-      grid-column: 1;
-    }
-    
-    .totals-card {
-      grid-column: 1;
-    }
-
-    .form-row {
-      grid-template-columns: 1fr;
-    }
-
-    .actions-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .save-options {
-      flex-direction: column;
-    }
-
-    .action-buttons {
-      justify-content: flex-end;
-    }
   }
 
-  @media (max-width: 640px) {
-    .page-header {
-      flex-direction: column;
-      gap: 1rem;
-    }
+  .form-left,
+  .form-right {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
 
-    .header-actions {
-      width: 100%;
-      justify-content: flex-end;
-    }
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #111827;
+    margin: 0 0 1rem 0;
+  }
 
-    .line-items-table {
-      font-size: 0.875rem;
-    }
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
 
-    .line-items-table th,
-    .line-items-table td {
-      padding: 0.25rem;
-    }
+  .section-header .section-title {
+    margin: 0;
+  }
 
-    .action-buttons {
-      flex-direction: column;
-    }
+  .fields-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
 
-    .action-buttons :global(button) {
-      width: 100%;
-    }
+  .field-full {
+    grid-column: 1 / -1;
+  }
+
+  .fields-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* Line items table */
+  .line-items-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .line-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .line-items-table thead tr {
+    border-bottom: 2px solid #e5e7eb;
+  }
+
+  .line-items-table th {
+    padding: 0.5rem 0.5rem;
+    text-align: left;
+    font-weight: 600;
+    color: #6b7280;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .line-item-row {
+    border-bottom: 1px solid #f3f4f6;
+  }
+
+  .line-item-row td {
+    padding: 0.375rem 0.25rem;
+    vertical-align: middle;
+  }
+
+  .col-desc  { width: 35%; }
+  .col-qty   { width: 8%; }
+  .col-price { width: 13%; }
+  .col-disc  { width: 10%; }
+  .col-tax   { width: 10%; }
+  .col-total { width: 14%; padding-right: 0.5rem; }
+  .col-action{ width: 5%; text-align: center; }
+
+  .cell-input {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    color: #111827;
+    background: #fff;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+  }
+
+  .cell-input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+
+  .text-right { text-align: right; }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #9ca3af;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    transition: color 0.1s, background-color 0.1s;
+  }
+
+  .remove-btn:hover:not(:disabled) {
+    color: #ef4444;
+    background-color: #fee2e2;
+  }
+
+  .remove-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* Totals */
+  .totals-section {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .totals-grid {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 0.35rem 1.5rem;
+    text-align: right;
+    font-size: 0.875rem;
+  }
+
+  .totals-label {
+    color: #6b7280;
+    text-align: left;
+  }
+
+  .totals-value {
+    font-weight: 500;
+    color: #111827;
+  }
+
+  .grand-label {
+    font-weight: 700;
+    color: #111827;
+    font-size: 1rem;
+    padding-top: 0.5rem;
+    border-top: 2px solid #e5e7eb;
+  }
+
+  .grand-value {
+    font-weight: 700;
+    color: #111827;
+    font-size: 1.1rem;
+    padding-top: 0.5rem;
+    border-top: 2px solid #e5e7eb;
+  }
+
+  /* Side summary card */
+  .summary-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    color: #374151;
+  }
+
+  .summary-total-row {
+    font-weight: 700;
+    font-size: 1rem;
+    color: #111827;
+    padding-top: 0.5rem;
+    border-top: 2px solid #e5e7eb;
+    margin-top: 0.25rem;
+  }
+
+  .bottom-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e5e7eb;
   }
 </style>
