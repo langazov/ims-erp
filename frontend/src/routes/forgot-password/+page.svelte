@@ -62,7 +62,7 @@
           </div>
           <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Check your email</h2>
           <p class="text-sm text-gray-600 dark:text-gray-400">
-            If an account exists for <strong>{email}</strong>, you'll receive a password reset link shortly.
+            If that email is registered, you'll receive a password reset link shortly. Check your inbox and spam folder.
           </p>
           <a
             href="/login"

@@ -14,7 +14,7 @@
     icon: string;
   }
 
-  let loading = $state(true);
+  let kpisLoading = $state(true);
 
   let revenueToday = $state('$0');
   let activeOrders = $state(0);
@@ -52,7 +52,7 @@
       overdueInvoices  = 0;
       lowStockItems    = 0;
     } finally {
-      loading = false;
+      kpisLoading = false;
     }
   });
 </script>
@@ -70,7 +70,7 @@
 
   <!-- KPI Stat Cards -->
   <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-    {#if loading}
+    {#if kpisLoading}
       {#each Array(4) as _}
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
           <Skeleton class="h-4 w-1/2 mb-4" />
