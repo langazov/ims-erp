@@ -4,415 +4,221 @@
   import Input from '$lib/shared/components/forms/Input.svelte';
   import Select from '$lib/shared/components/forms/Select.svelte';
   import Card from '$lib/shared/components/layout/Card.svelte';
-  import Table from '$lib/shared/components/data/Table.svelte';
   import Badge from '$lib/shared/components/display/Badge.svelte';
   import Spinner from '$lib/shared/components/display/Spinner.svelte';
-  import Alert from '$lib/shared/components/display/Alert.svelte';
-  import Modal from '$lib/shared/components/layout/Modal.svelte';
-  import Pagination from '$lib/shared/components/data/Pagination.svelte';
-
-  interface Product {
-    id: string;
-    sku: string;
-    name: string;
-    description: string;
-    category: string;
-    type: 'physical' | 'digital' | 'service';
-    status: 'active' | 'inactive' | 'draft';
-    listPrice: number;
-    salePrice: number;
-    costPrice: number;
-    stockQuantity: number;
-    lowStockThreshold: number;
-    images: string[];
-    createdAt: string;
-  }
+  import { getProducts, deleteProduct, getProductStats } from '$lib/shared/api/products';
+  import type { Product, ProductStatus } from '$lib/shared/api/products';
 
   let products: Product[] = [];
-  let loading = true;
-  let error: string | null = null;
-  let searchQuery = '';
-  let statusFilter: string = '';
-  let categoryFilter: string = '';
-  let currentPage = 1;
+  let total = 0;
   let totalPages = 1;
-  let totalItems = 0;
-  let pageSize = 10;
-  let showCreateModal = false;
-  let deleteProductId: string | null = null;
+  let currentPage = 1;
+  let loading = true;
+  let error = '';
+  let searchQuery = '';
+  let categoryFilter = '';
+  let statusFilter: ProductStatus | '' = '';
+  let stats: { total: number; active: number; lowStock: number; outOfStock: number } | null = null;
+  let deleteConfirmId = '';
+  let deleteConfirmName = '';
+  let deleting = false;
 
   const statusOptions = [
     { value: '', label: 'All Statuses' },
     { value: 'active', label: 'Active' },
     { value: 'inactive', label: 'Inactive' },
-    { value: 'draft', label: 'Draft' }
+    { value: 'discontinued', label: 'Discontinued' }
   ];
 
-  const categoryOptions = [
-    { value: '', label: 'All Categories' },
-    { value: 'electronics', label: 'Electronics' },
-    { value: 'clothing', label: 'Clothing' },
-    { value: 'food', label: 'Food & Beverage' },
-    { value: 'home', label: 'Home & Garden' }
-  ];
-
-  const columns = [
-    { key: 'sku', label: 'SKU', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'category', label: 'Category', sortable: true },
-    { key: 'status', label: 'Status', sortable: true },
-    { key: 'price', label: 'Price', sortable: true },
-    { key: 'stock', label: 'Stock', sortable: true },
-    { key: 'actions', label: 'Actions', sortable: false }
-  ];
-
-  function getStatusVariant(status: string): 'green' | 'gray' | 'yellow' | 'red' {
-    switch (status) {
-      case 'active': return 'green';
-      case 'draft': return 'yellow';
-      case 'inactive': return 'gray';
-      default: return 'gray';
-    }
+  function statusVariant(status: ProductStatus): 'green' | 'gray' | 'red' {
+    if (status === 'active') return 'green';
+    if (status === 'discontinued') return 'red';
+    return 'gray';
   }
 
-  function formatCurrency(value: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(value);
+  function formatCurrency(val: string | number) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(val) || 0);
   }
 
-  async function loadProducts() {
+  async function load() {
     loading = true;
-    error = null;
-    
+    error = '';
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      products = [
-        {
-          id: '1',
-          sku: 'PROD-001',
-          name: 'Wireless Bluetooth Headphones',
-          description: 'High-quality wireless headphones with noise cancellation',
-          category: 'electronics',
-          type: 'physical',
-          status: 'active',
-          listPrice: 199.99,
-          salePrice: 179.99,
-          costPrice: 89.99,
-          stockQuantity: 150,
-          lowStockThreshold: 20,
-          images: [],
-          createdAt: '2024-01-15'
-        },
-        {
-          id: '2',
-          sku: 'PROD-002',
-          name: 'Cotton T-Shirt',
-          description: 'Premium cotton t-shirt in various colors',
-          category: 'clothing',
-          type: 'physical',
-          status: 'active',
-          listPrice: 29.99,
-          salePrice: 24.99,
-          costPrice: 12.99,
-          stockQuantity: 500,
-          lowStockThreshold: 50,
-          images: [],
-          createdAt: '2024-02-01'
-        },
-        {
-          id: '3',
-          sku: 'PROD-003',
-          name: 'Organic Coffee Beans',
-          description: 'Single-origin organic coffee beans',
-          category: 'food',
-          type: 'physical',
-          status: 'active',
-          listPrice: 24.99,
-          salePrice: 19.99,
-          costPrice: 10.99,
-          stockQuantity: 8,
-          lowStockThreshold: 15,
-          images: [],
-          createdAt: '2024-02-10'
-        }
-      ];
-      
-      totalItems = products.length;
-      totalPages = Math.ceil(totalItems / pageSize);
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load products';
+      const res = await getProducts({
+        search: searchQuery || undefined,
+        category: categoryFilter || undefined,
+        status: statusFilter || undefined,
+        page: currentPage,
+        pageSize: 20
+      });
+      products = res.data;
+      total = res.total;
+      totalPages = res.totalPages;
+    } catch (e: any) {
+      error = e.message || 'Failed to load products';
     } finally {
       loading = false;
     }
   }
 
-  function handleSearch() {
-    currentPage = 1;
-    loadProducts();
+  async function loadStats() {
+    try { stats = await getProductStats(); } catch {}
   }
 
-  function handleRowClick(product: Product) {
-    window.location.href = `/products/${product.id}`;
+  async function confirmDelete(id: string, name: string) {
+    deleteConfirmId = id;
+    deleteConfirmName = name;
   }
 
-  function handleEdit(product: Product, event: Event) {
-    event.stopPropagation();
-    window.location.href = `/products/${product.id}/edit`;
-  }
-
-  async function handleDelete(product: Product, event: Event) {
-    event.stopPropagation();
-    deleteProductId = product.id;
-  }
-
-  async function confirmDelete() {
-    if (!deleteProductId) return;
-    
+  async function doDelete() {
+    deleting = true;
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      products = products.filter(p => p.id !== deleteProductId);
-      totalItems = products.length;
-      deleteProductId = null;
-    } catch (err) {
-      error = 'Failed to delete product';
+      await deleteProduct(deleteConfirmId);
+      deleteConfirmId = '';
+      await load();
+      await loadStats();
+    } catch (e: any) {
+      error = e.message || 'Delete failed';
+    } finally {
+      deleting = false;
     }
   }
 
-  function handlePageChange(newPage: number) {
-    currentPage = newPage;
-    loadProducts();
-  }
-
-  onMount(() => {
-    loadProducts();
-  });
+  onMount(() => { load(); loadStats(); });
 </script>
-
-<svelte:head>
-  <title>Products | ERP System</title>
-</svelte:head>
 
 <div class="page-container">
   <div class="page-header">
-    <div class="header-content">
+    <div>
       <h1 class="page-title">Products</h1>
-      <p class="page-description">Manage your product catalog and inventory</p>
+      <p class="page-description">Manage your product catalog</p>
     </div>
-    <div class="header-actions">
-      <Button variant="primary" on:click={() => showCreateModal = true}>
-        Add Product
-      </Button>
-    </div>
+    <Button variant="primary" on:click={() => window.location.href = '/products/new'}>+ Add Product</Button>
   </div>
 
-  {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => error = null}>
-      {error}
-    </Alert>
+  {#if stats}
+    <div class="stats-grid">
+      <Card><div class="stat"><span class="stat-label">Total</span><span class="stat-value">{stats.total}</span></div></Card>
+      <Card><div class="stat"><span class="stat-label">Active</span><span class="stat-value text-green">{stats.active}</span></div></Card>
+      <Card><div class="stat"><span class="stat-label">Low Stock</span><span class="stat-value text-yellow">{stats.lowStock}</span></div></Card>
+      <Card><div class="stat"><span class="stat-label">Out of Stock</span><span class="stat-value text-red">{stats.outOfStock}</span></div></Card>
+    </div>
   {/if}
 
   <Card>
     <div class="filters">
       <div class="filter-row">
         <div class="filter-item search-filter">
-          <Input
-            id="search"
-            label="Search"
-            type="search"
-            placeholder="Search products..."
-            bind:value={searchQuery}
-            on:keydown={(e) => e.key === 'Enter' && handleSearch()}
-          />
+          <Input placeholder="Search by name or SKU..." bind:value={searchQuery} on:input={load} />
         </div>
         <div class="filter-item">
-          <Select
-            id="status"
-            label="Status"
-            options={statusOptions}
-            bind:value={statusFilter}
-            on:change={() => handleSearch()}
-          />
+          <Input placeholder="Filter by category..." bind:value={categoryFilter} on:input={load} />
         </div>
         <div class="filter-item">
-          <Select
-            id="category"
-            label="Category"
-            options={categoryOptions}
-            bind:value={categoryFilter}
-            on:change={() => handleSearch()}
-          />
-        </div>
-        <div class="filter-item">
-          <Button variant="secondary" on:click={handleSearch}>
-            Search
-          </Button>
+          <Select options={statusOptions} bind:value={statusFilter} on:change={load} />
         </div>
       </div>
     </div>
 
     {#if loading}
-      <div class="loading-container">
-        <Spinner size="lg" />
-        <p>Loading products...</p>
-      </div>
+      <div class="loading-container"><Spinner size="lg" /><span>Loading products...</span></div>
+    {:else if error}
+      <div class="error-container"><p class="error-message">{error}</p><Button variant="secondary" on:click={load}>Retry</Button></div>
     {:else if products.length === 0}
       <div class="empty-container">
-        <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-        </svg>
-        <p class="text-gray-500 mb-4">No products found</p>
-        <Button variant="primary" on:click={() => showCreateModal = true}>
-          Add Your First Product
-        </Button>
+        <p>No products found.</p>
+        <Button variant="primary" on:click={() => window.location.href = '/products/new'}>Add First Product</Button>
       </div>
     {:else}
-      <Table {columns}>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>SKU</th><th>Name</th><th>Category</th><th>Price</th><th>Cost</th><th>Stock</th><th>Status</th><th>Actions</th>
+          </tr>
+        </thead>
         <tbody>
-          {#each products as product}
-            <tr on:click={() => handleRowClick(product)} class="clickable-row">
-              <td class="font-medium">{product.sku}</td>
-              <td>{product.name}</td>
-              <td class="capitalize">{product.category}</td>
+          {#each products as p}
+            <tr class="clickable-row" on:click={() => window.location.href = `/products/${p.id}`}>
+              <td class="mono">{p.sku}</td>
+              <td class="font-medium">{p.name}</td>
+              <td>{p.category || '—'}</td>
+              <td>{formatCurrency(p.price)}</td>
+              <td>{formatCurrency(p.cost)}</td>
               <td>
-                <Badge variant={getStatusVariant(product.status)}>
-                  {product.status}
-                </Badge>
+                {#if p.stockQuantity <= p.lowStockThreshold && p.stockQuantity > 0}
+                  <Badge variant="yellow">{p.stockQuantity} {p.unit || 'units'}</Badge>
+                {:else if p.stockQuantity === 0}
+                  <Badge variant="red">Out of stock</Badge>
+                {:else}
+                  {p.stockQuantity} {p.unit || 'units'}
+                {/if}
               </td>
-              <td>{formatCurrency(product.salePrice)}</td>
+              <td><Badge variant={statusVariant(p.status)}>{p.status}</Badge></td>
               <td>
-                <span class={product.stockQuantity <= product.lowStockThreshold ? 'text-red-600 font-medium' : ''}>
-                  {product.stockQuantity}
-                  {#if product.stockQuantity <= product.lowStockThreshold}
-                    <span class="text-xs ml-1">(Low)</span>
-                  {/if}
-                </span>
-              </td>
-              <td>
-                <div class="actions-cell">
-                  <Button variant="ghost" size="sm" on:click={(e) => handleEdit(product, e)}>
-                    Edit
-                  </Button>
-                  <Button variant="ghost" size="sm" on:click={(e) => handleDelete(product, e)}>
-                    Delete
-                  </Button>
+                <div class="actions-cell" on:click|stopPropagation>
+                  <Button size="sm" variant="secondary" on:click={() => window.location.href = `/products/${p.id}/edit`}>Edit</Button>
+                  <Button size="sm" variant="danger" on:click={() => confirmDelete(p.id, p.name)}>Delete</Button>
                 </div>
               </td>
             </tr>
           {/each}
         </tbody>
-      </Table>
+      </table>
 
-      <Pagination
-        {currentPage}
-        {totalPages}
-        {totalItems}
-        {pageSize}
-        on:pageChange={(e) => handlePageChange(e.detail)}
-      />
+      {#if totalPages > 1}
+        <div class="pagination">
+          <Button variant="secondary" disabled={currentPage === 1} on:click={() => { currentPage--; load(); }}>Previous</Button>
+          <span class="pagination-info">Page {currentPage} of {totalPages} ({total} total)</span>
+          <Button variant="secondary" disabled={currentPage === totalPages} on:click={() => { currentPage++; load(); }}>Next</Button>
+        </div>
+      {/if}
     {/if}
   </Card>
 </div>
 
-<Modal
-  bind:open={showCreateModal}
-  title="Create Product"
-  size="lg"
->
-  <p class="text-gray-600">Product creation form will be implemented here.</p>
-  
-  <svelte:fragment slot="footer" let:close>
-    <Button variant="secondary" on:click={close}>Cancel</Button>
-    <Button variant="primary" on:click={() => {
-      showCreateModal = false;
-    }}>Create</Button>
-  </svelte:fragment>
-</Modal>
-
-{#if deleteProductId}
-  <Modal
-    open={true}
-    title="Delete Product"
-    size="sm"
-  >
-    <p>Are you sure you want to delete this product? This action cannot be undone.</p>
-    
-    <svelte:fragment slot="footer" let:close>
-      <Button variant="secondary" on:click={() => { close(); deleteProductId = null; }}>Cancel</Button>
-      <Button variant="danger" on:click={confirmDelete}>Delete</Button>
-    </svelte:fragment>
-  </Modal>
+{#if deleteConfirmId}
+  <div class="modal-overlay">
+    <div class="modal">
+      <h3>Delete Product</h3>
+      <p>Are you sure you want to delete <strong>{deleteConfirmName}</strong>?</p>
+      <div class="modal-actions">
+        <Button variant="secondary" on:click={() => deleteConfirmId = ''}>Cancel</Button>
+        <Button variant="danger" disabled={deleting} on:click={doDelete}>{deleting ? 'Deleting...' : 'Delete'}</Button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <style>
-  .page-container {
-    padding: 1.5rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 1.5rem;
-  }
-
-  .page-title {
-    font-size: 1.875rem;
-    font-weight: 700;
-    color: var(--color-gray-900);
-    margin: 0;
-  }
-
-  .page-description {
-    color: var(--color-gray-500);
-    margin-top: 0.25rem;
-  }
-
-  .filters {
-    margin-bottom: 1rem;
-  }
-
-  .filter-row {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .filter-item {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .search-filter {
-    flex: 2;
-    min-width: 300px;
-  }
-
-  .loading-container,
-  .empty-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem;
-    gap: 1rem;
-    color: var(--color-gray-500);
-  }
-
-  .clickable-row {
-    cursor: pointer;
-  }
-
-  .clickable-row:hover {
-    background-color: var(--color-gray-50);
-  }
-
-  .actions-cell {
-    display: flex;
-    gap: 0.5rem;
-  }
+  .page-container { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; }
+  .page-title { font-size: 1.875rem; font-weight: 700; color: var(--color-gray-900); margin: 0; }
+  .page-description { color: var(--color-gray-500); margin-top: 0.25rem; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  .stat { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem; }
+  .stat-label { font-size: 0.75rem; color: var(--color-gray-500); text-transform: uppercase; }
+  .stat-value { font-size: 1.5rem; font-weight: 700; }
+  .text-green { color: var(--color-green-600); }
+  .text-yellow { color: var(--color-yellow-600); }
+  .text-red { color: var(--color-red-600); }
+  .filters { margin-bottom: 1rem; }
+  .filter-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .filter-item { flex: 1; min-width: 180px; }
+  .search-filter { flex: 2; min-width: 280px; }
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th { text-align: left; padding: 0.75rem 1rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--color-gray-500); border-bottom: 1px solid var(--color-gray-200); }
+  .data-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-gray-100); font-size: 0.875rem; }
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover { background-color: var(--color-gray-50); }
+  .mono { font-family: monospace; font-size: 0.8rem; }
+  .font-medium { font-weight: 500; }
+  .actions-cell { display: flex; gap: 0.5rem; }
+  .loading-container, .error-container, .empty-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem; gap: 1rem; color: var(--color-gray-500); }
+  .error-message { color: var(--color-red-600); }
+  .pagination { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-gray-200); }
+  .pagination-info { color: var(--color-gray-600); font-size: 0.875rem; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .modal { background: white; border-radius: 0.5rem; padding: 1.5rem; max-width: 400px; width: 90%; }
+  .modal h3 { margin: 0 0 0.75rem; font-size: 1.125rem; font-weight: 600; }
+  .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.5rem; }
 </style>
