@@ -5,6 +5,7 @@
   import Select from '$lib/shared/components/forms/Select.svelte';
   import Card from '$lib/shared/components/layout/Card.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
+  import { createWarehouse } from '$lib/shared/api/warehouse';
 
   let code = '';
   let name = '';
@@ -74,10 +75,8 @@
 
     submitting = true;
     error = null;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      console.log('Creating warehouse:', data);
+      await createWarehouse(data);
       goto('/warehouse');
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to create warehouse';

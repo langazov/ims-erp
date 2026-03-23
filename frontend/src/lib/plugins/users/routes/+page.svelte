@@ -11,19 +11,8 @@
   import Modal from '$lib/shared/components/layout/Modal.svelte';
   import Pagination from '$lib/shared/components/data/Pagination.svelte';
   import Avatar from '$lib/shared/components/display/Avatar.svelte';
-
-  interface User {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    role: 'admin' | 'manager' | 'user' | 'viewer';
-    status: 'active' | 'inactive' | 'locked' | 'pending';
-    department: string;
-    lastLoginAt: string | null;
-    createdAt: string;
-    mfaEnabled: boolean;
-  }
+  import { getUsers, deleteUser } from '$lib/shared/api/users';
+  import type { User, UserFilter } from '$lib/shared/api/users';
 
   let users: User[] = [];
   let loading = true;
@@ -98,63 +87,15 @@
   async function loadUsers() {
     loading = true;
     error = null;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      users = [
-        {
-          id: '1',
-          email: 'john.doe@example.com',
-          firstName: 'John',
-          lastName: 'Doe',
-          role: 'admin',
-          status: 'active',
-          department: 'IT',
-          lastLoginAt: '2024-01-15T10:30:00Z',
-          createdAt: '2023-06-01',
-          mfaEnabled: true
-        },
-        {
-          id: '2',
-          email: 'jane.smith@example.com',
-          firstName: 'Jane',
-          lastName: 'Smith',
-          role: 'manager',
-          status: 'active',
-          department: 'Sales',
-          lastLoginAt: '2024-01-14T16:45:00Z',
-          createdAt: '2023-07-15',
-          mfaEnabled: true
-        },
-        {
-          id: '3',
-          email: 'bob.wilson@example.com',
-          firstName: 'Bob',
-          lastName: 'Wilson',
-          role: 'user',
-          status: 'active',
-          department: 'Warehouse',
-          lastLoginAt: '2024-01-10T09:15:00Z',
-          createdAt: '2023-08-20',
-          mfaEnabled: false
-        },
-        {
-          id: '4',
-          email: 'alice.brown@example.com',
-          firstName: 'Alice',
-          lastName: 'Brown',
-          role: 'viewer',
-          status: 'pending',
-          department: 'Finance',
-          lastLoginAt: null,
-          createdAt: '2024-01-05',
-          mfaEnabled: false
-        }
-      ];
-      
-      totalItems = users.length;
-      totalPages = Math.ceil(totalItems / pageSize);
+      const filter: UserFilter = { page: currentPage, pageSize };
+      if (searchQuery) filter.search = searchQuery;
+      if (roleFilter) filter.role = roleFilter as UserFilter['role'];
+      if (statusFilter) filter.status = statusFilter as UserFilter['status'];
+      const response = await getUsers(filter);
+      users = response.data;
+      totalItems = response.total;
+      totalPages = response.totalPages;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load users';
     } finally {
@@ -183,12 +124,10 @@
 
   async function confirmDelete() {
     if (!deleteUserId) return;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      users = users.filter(u => u.id !== deleteUserId);
-      totalItems = users.length;
+      await deleteUser(deleteUserId);
       deleteUserId = null;
+      await loadUsers();
     } catch (err) {
       error = 'Failed to delete user';
     }
@@ -288,10 +227,10 @@
             <tr on:click={() => handleRowClick(user)} class="clickable-row">
               <td>
                 <div class="flex items-center gap-3">
-                  <Avatar fallback={`${user.firstName} ${user.lastName}`} size="sm" />
+                  <Avatar fallback={user.name} size="sm" />
                   <div>
-                    <div class="font-medium">{user.firstName} {user.lastName}</div>
-                    {#if user.mfaEnabled}
+                    <div class="font-medium">{user.name}</div>
+                    {#if (user as any).mfaEnabled}
                       <span class="text-xs text-green-600">MFA Enabled</span>
                     {/if}
                   </div>
@@ -308,8 +247,8 @@
                   {user.status}
                 </Badge>
               </td>
-              <td class="capitalize">{user.department}</td>
-              <td class="text-sm text-gray-500">{formatDate(user.lastLoginAt)}</td>
+              <td class="capitalize">{(user as any).department ?? '-'}</td>
+              <td class="text-sm text-gray-500">{formatDate(user.lastLogin)}</td>
               <td>
                 <div class="actions-cell">
                   <Button variant="ghost" size="sm" on:click={(e) => handleEdit(user, e)}>

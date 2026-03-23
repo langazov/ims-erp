@@ -9,23 +9,8 @@
   import Spinner from '$lib/shared/components/display/Spinner.svelte';
   import Alert from '$lib/shared/components/display/Alert.svelte';
   import Pagination from '$lib/shared/components/data/Pagination.svelte';
-
-  interface InventoryItem {
-    id: string;
-    productId: string;
-    productName: string;
-    productSku: string;
-    warehouseId: string;
-    warehouseName: string;
-    locationCode: string;
-    quantity: number;
-    reservedQuantity: number;
-    availableQuantity: number;
-    status: 'available' | 'reserved' | 'allocated' | 'in_transit' | 'quarantine' | 'damaged';
-    lotNumber: string | null;
-    expirationDate: string | null;
-    lastUpdated: string;
-  }
+  import { getInventory } from '$lib/shared/api/inventory';
+  import type { InventoryItem, InventoryFilter } from '$lib/shared/api/inventory';
 
   let items: InventoryItem[] = [];
   let loading = true;
@@ -95,111 +80,17 @@
   async function loadItems() {
     loading = true;
     error = null;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      items = [
-        {
-          id: '1',
-          productId: '1',
-          productName: 'Wireless Bluetooth Headphones',
-          productSku: 'PROD-001',
-          warehouseId: '1',
-          warehouseName: 'Main Distribution Center',
-          locationCode: 'A-01-R01',
-          quantity: 150,
-          reservedQuantity: 25,
-          availableQuantity: 125,
-          status: 'available',
-          lotNumber: 'LOT-2024-001',
-          expirationDate: null,
-          lastUpdated: '2024-01-15T10:30:00Z'
-        },
-        {
-          id: '2',
-          productId: '2',
-          productName: 'Cotton T-Shirt',
-          productSku: 'PROD-002',
-          warehouseId: '1',
-          warehouseName: 'Main Distribution Center',
-          locationCode: 'B-02-R05',
-          quantity: 500,
-          reservedQuantity: 100,
-          availableQuantity: 400,
-          status: 'available',
-          lotNumber: null,
-          expirationDate: null,
-          lastUpdated: '2024-01-14T16:45:00Z'
-        },
-        {
-          id: '3',
-          productId: '3',
-          productName: 'Organic Coffee Beans',
-          productSku: 'PROD-003',
-          warehouseId: '2',
-          warehouseName: 'West Coast Hub',
-          locationCode: 'A-01-B12',
-          quantity: 50,
-          reservedQuantity: 42,
-          availableQuantity: 8,
-          status: 'reserved',
-          lotNumber: 'LOT-2024-003',
-          expirationDate: '2024-12-31',
-          lastUpdated: '2024-01-10T09:15:00Z'
-        },
-        {
-          id: '4',
-          productId: '4',
-          productName: 'Fresh Milk 1L',
-          productSku: 'PROD-004',
-          warehouseId: '3',
-          warehouseName: 'Retail Store - Downtown',
-          locationCode: 'COLD-01',
-          quantity: 24,
-          reservedQuantity: 0,
-          availableQuantity: 24,
-          status: 'available',
-          lotNumber: 'LOT-2024-004',
-          expirationDate: '2024-02-15',
-          lastUpdated: '2024-01-16T08:00:00Z'
-        },
-        {
-          id: '5',
-          productId: '5',
-          productName: 'Premium Chocolate Bar',
-          productSku: 'PROD-005',
-          warehouseId: '1',
-          warehouseName: 'Main Distribution Center',
-          locationCode: 'A-03-R02',
-          quantity: 200,
-          reservedQuantity: 50,
-          availableQuantity: 150,
-          status: 'quarantine',
-          lotNumber: 'LOT-2024-005',
-          expirationDate: '2024-06-30',
-          lastUpdated: '2024-01-12T14:20:00Z'
-        },
-        {
-          id: '6',
-          productId: '6',
-          productName: 'Expired Yogurt',
-          productSku: 'PROD-006',
-          warehouseId: '3',
-          warehouseName: 'Retail Store - Downtown',
-          locationCode: 'COLD-02',
-          quantity: 12,
-          reservedQuantity: 0,
-          availableQuantity: 0,
-          status: 'damaged',
-          lotNumber: 'LOT-2023-099',
-          expirationDate: '2024-01-01',
-          lastUpdated: '2024-01-01T10:00:00Z'
-        }
-      ];
-      
-      totalItems = items.length;
-      totalPages = Math.ceil(totalItems / pageSize);
+      const filter: InventoryFilter = {
+        page: currentPage,
+        pageSize,
+      };
+      if (searchQuery) filter.search = searchQuery;
+      if (warehouseFilter) filter.warehouseId = warehouseFilter;
+      const response = await getInventory(filter);
+      items = response.data;
+      totalItems = response.total;
+      totalPages = response.totalPages;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load inventory items';
     } finally {

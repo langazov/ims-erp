@@ -11,22 +11,8 @@
   import Modal from '$lib/shared/components/layout/Modal.svelte';
   import Pagination from '$lib/shared/components/data/Pagination.svelte';
   import FileUpload from '$lib/shared/components/forms/FileUpload.svelte';
-
-  interface Document {
-    id: string;
-    name: string;
-    type: 'invoice' | 'po' | 'receipt' | 'contract' | 'scanned' | 'other';
-    size: number;
-    contentType: string;
-    status: 'pending' | 'processing' | 'completed' | 'failed';
-    uploadedBy: string;
-    uploadedAt: string;
-    tags: string[];
-    metadata: {
-      pageCount?: number;
-      extractedText?: string;
-    };
-  }
+  import { getDocuments, deleteDocument, uploadDocument } from '$lib/shared/api/documents';
+  import type { Document, DocumentFilter } from '$lib/shared/api/documents';
 
   let documents: Document[] = [];
   let loading = true;
@@ -112,75 +98,15 @@
   async function loadDocuments() {
     loading = true;
     error = null;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      documents = [
-        {
-          id: '1',
-          name: 'Invoice_2024_001.pdf',
-          type: 'invoice',
-          size: 245760,
-          contentType: 'application/pdf',
-          status: 'completed',
-          uploadedBy: 'John Doe',
-          uploadedAt: '2024-01-15T10:30:00Z',
-          tags: ['invoice', '2024', 'client-a'],
-          metadata: { pageCount: 2, extractedText: 'Invoice #001...' }
-        },
-        {
-          id: '2',
-          name: 'Purchase_Order_12345.pdf',
-          type: 'po',
-          size: 512000,
-          contentType: 'application/pdf',
-          status: 'completed',
-          uploadedBy: 'Jane Smith',
-          uploadedAt: '2024-01-14T16:45:00Z',
-          tags: ['po', 'supplier'],
-          metadata: { pageCount: 3 }
-        },
-        {
-          id: '3',
-          name: 'Contract_Agreement_2024.docx',
-          type: 'contract',
-          size: 1048576,
-          contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          status: 'processing',
-          uploadedBy: 'Bob Wilson',
-          uploadedAt: '2024-01-13T09:15:00Z',
-          tags: ['contract', 'legal'],
-          metadata: {}
-        },
-        {
-          id: '4',
-          name: 'Receipt_Store_001.jpg',
-          type: 'receipt',
-          size: 1536000,
-          contentType: 'image/jpeg',
-          status: 'completed',
-          uploadedBy: 'Alice Brown',
-          uploadedAt: '2024-01-12T14:20:00Z',
-          tags: ['receipt', 'expense'],
-          metadata: {}
-        },
-        {
-          id: '5',
-          name: 'Scanned_Document_001.pdf',
-          type: 'scanned',
-          size: 3145728,
-          contentType: 'application/pdf',
-          status: 'failed',
-          uploadedBy: 'John Doe',
-          uploadedAt: '2024-01-11T11:00:00Z',
-          tags: ['scanned'],
-          metadata: {}
-        }
-      ];
-      
-      totalItems = documents.length;
-      totalPages = Math.ceil(totalItems / pageSize);
+      const filter: DocumentFilter = { page: currentPage, pageSize };
+      if (searchQuery) filter.search = searchQuery;
+      if (typeFilter) filter.type = typeFilter as DocumentFilter['type'];
+      if (statusFilter) filter.status = statusFilter as DocumentFilter['status'];
+      const response = await getDocuments(filter);
+      documents = response.data;
+      totalItems = response.total;
+      totalPages = response.totalPages;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load documents';
     } finally {
@@ -210,12 +136,10 @@
 
   async function confirmDelete() {
     if (!deleteDocumentId) return;
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      documents = documents.filter(d => d.id !== deleteDocumentId);
-      totalItems = documents.length;
+      await deleteDocument(deleteDocumentId);
       deleteDocumentId = null;
+      await loadDocuments();
     } catch (err) {
       error = 'Failed to delete document';
     }
